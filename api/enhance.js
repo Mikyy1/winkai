@@ -22,23 +22,18 @@ const UA = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like G
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const safeStr = (o) => { try { return typeof o === "string" ? o : JSON.stringify(o); } catch { return String(o); } };
 
-function makeTrace() {
-  return crypto.randomBytes(16).toString("hex") + "-" + crypto.randomBytes(8).toString("hex") + "-1";
-}
+function makeTrace() { return crypto.randomBytes(16).toString("hex") + "-" + crypto.randomBytes(8).toString("hex") + "-1"; }
 function traceHeaders() {
   const t = makeTrace();
   return { "sentry-trace": t, baggage: "sentry-environment=release,sentry-release=5.1.2,sentry-public_key=e1bf914f3448d9bc8a10c7e499d17d54,sentry-trace_id=" + t.split("-")[0] + ",sentry-sampled=true,sentry-sample_rate=0.75" };
 }
-function extToMime(f) {
-  const e = path.extname(f).toLowerCase();
-  return {".mp4":"video/mp4",".mov":"video/quicktime",".webm":"video/webm",".mkv":"video/x-matroska"}[e]||"application/octet-stream";
-}
-function baseParams(g, x={}) {
-  return new URLSearchParams({client_id:CLIENT_ID,version:VERSION,country_code:COUNTRY_CODE,gnum:g,client_language:CLIENT_LANGUAGE,client_channel_id:"",client_timezone:CLIENT_TIMEZONE,...x});
-}
+function extToMime(f) { const e = path.extname(f).toLowerCase(); return {".mp4":"video/mp4",".mov":"video/quicktime",".webm":"video/webm",".mkv":"video/x-matroska"}[e]||"application/octet-stream"; }
+function baseParams(g, x={}) { return new URLSearchParams({client_id:CLIENT_ID,version:VERSION,country_code:COUNTRY_CODE,gnum:g,client_language:CLIENT_LANGUAGE,client_channel_id:"",client_timezone:CLIENT_TIMEZONE,...x}); }
+
 function mkClient(g, jar) {
   return wrapper(axios.create({baseURL:BASE_URL,jar,withCredentials:true,validateStatus:()=>true,headers:{accept:"*/*",origin:BASE_URL,referer:BASE_URL+"/video-enhancer/upload","user-agent":UA,"sec-ch-ua":'"Chromium";v="147"',"sec-ch-ua-mobile":"?1","sec-ch-ua-platform":'"Android"',ab_info:JSON.stringify({ab_codes:[],version:"1.4.4"})}}));
 }
+
 function sendEvt(r,e,d){try{r.write("event: "+e+"\ndata: "+JSON.stringify(d)+"\n\n");}catch{}}
 function sendLog(r,lv,msg,det=null){
   const ts=new Date().toISOString().slice(11,23);
@@ -46,6 +41,80 @@ function sendLog(r,lv,msg,det=null){
   console.log("["+ts+"] ["+lv+"] "+msg,det?safeStr(det).slice(0,500):"");
 }
 
+// ============ GUEST USER REGISTRATION ============
+async function registerGuest(res) {
+  sendLog(res, "info", "Registering guest user...");
+
+  // Generate device fingerprint
+  const deviceId = crypto.randomUUID().replace(/-/g, "");
+  const gnum = crypto.randomUUID();
+
+  // Try multiple registration endpoints
+  const endpoints = [
+    {
+      url: "/api/user/device_register.json",
+      method: "POST",
+      body: new URLSearchParams({
+        client_id: CLIENT_ID, version: VERSION, country_code: COUNTRY_CODE,
+        gnum, client_language: CLIENT_LANGUAGE, client_timezone: CLIENT_TIMEZONE,
+        device_id: deviceId, platform: "web", device_type: "mobile",
+        os: "Android", os_version: "10", browser: "Chrome",
+      }).toString(),
+      contentType: "application/x-www-form-urlencoded;charset=UTF-8",
+    },
+    {
+      url: "/api/user/guest_register.json",
+      method: "POST",
+      body: new URLSearchParams({
+        client_id: CLIENT_ID, version: VERSION, country_code: COUNTRY_CODE,
+        gnum, client_language: CLIENT_LANGUAGE, client_timezone: CLIENT_TIMEZONE,
+        device_id: deviceId,
+      }).toString(),
+      contentType: "application/x-www-form-urlencoded;charset=UTF-8",
+    },
+    {
+      url: "/api/user/third_party_login.json",
+      method: "POST",
+      body: new URLSearchParams({
+        client_id: CLIENT_ID, version: VERSION, country_code: COUNTRY_CODE,
+        gnum, client_language: CLIENT_LANGUAGE, client_timezone: CLIENT_TIMEZONE,
+        type: "guest", device_id: deviceId,
+      }).toString(),
+      contentType: "application/x-www-form-urlencoded;charset=UTF-8",
+    },
+  ];
+
+  for (const ep of endpoints) {
+    try {
+      sendLog(res, "debug", "Trying register endpoint: " + ep.url);
+      const r = await axios.post(BASE_URL + ep.url, ep.body, {
+        headers: {
+          "content-type": ep.contentType,
+          origin: BASE_URL,
+          referer: BASE_URL + "/",
+          "user-agent": UA,
+          accept: "*/*",
+        },
+        validateStatus: () => true,
+      });
+
+      sendLog(res, "debug", "Register response (" + r.status + "):", r.data);
+
+      if (r.status === 200 && r.data?.code === 0) {
+        sendLog(res, "success", "Guest registration OK via " + ep.url, r.data.data);
+        return { gnum, deviceId, userData: r.data.data };
+      }
+    } catch (err) {
+      sendLog(res, "debug", "Register endpoint " + ep.url + " failed: " + err.message);
+    }
+  }
+
+  // Fallback: just use gnum as identifier
+  sendLog(res, "warn", "No register endpoint worked, using gnum as fallback");
+  return { gnum, deviceId, userData: null };
+}
+
+// ============ DOWNLOAD VIDEO ============
 async function downloadVideo(url, res) {
   sendLog(res, "info", "Downloading video from: " + url.slice(0, 100));
   sendEvt(res, "progress", { step: "download", message: "Downloading your video...", pct: 0 });
@@ -55,10 +124,7 @@ async function downloadVideo(url, res) {
   sendLog(res, "info", "File size: " + (total / 1024 / 1024).toFixed(2) + " MB, type: " + (r.headers["content-type"] || "unknown"));
   let downloaded = 0, lastPct = -1;
   const writer = fs.createWriteStream(tmpPath);
-  r.data.on("data", (chunk) => {
-    downloaded += chunk.length;
-    if (total) { const pct = Math.round((downloaded / total) * 100); if (pct !== lastPct && pct % 10 === 0) { sendEvt(res, "progress", { step: "download", pct }); lastPct = pct; } }
-  });
+  r.data.on("data", (chunk) => { downloaded += chunk.length; if (total) { const pct = Math.round((downloaded / total) * 100); if (pct !== lastPct && pct % 10 === 0) { sendEvt(res, "progress", { step: "download", pct }); lastPct = pct; } } });
   r.data.pipe(writer);
   await new Promise((ok, fail) => { writer.on("finish", ok); writer.on("error", fail); });
   const stat = await fsp.stat(tmpPath);
@@ -66,6 +132,7 @@ async function downloadVideo(url, res) {
   return tmpPath;
 }
 
+// ============ WINK API FUNCTIONS ============
 async function getMaatSign(c, g, res) {
   sendLog(res, "info", "Getting upload sign...");
   const p = baseParams(g, { suffix: ".mp4", type: "temp", count: "1" });
@@ -122,79 +189,65 @@ async function pollTranscode(c, g, id, fallback, res) {
   for (let i = 0; i < 60; i++) {
     const p = baseParams(g, { id });
     const r = await c.get("/api/file/video_trans_query.json?" + p, { headers: traceHeaders() });
-    if (r.status >= 400 || r.data?.code !== 0) {
-      sendLog(res, "warn", "transcode poll error", { status: r.status, data: r.data });
-      await sleep(3000);
-      continue;
-    }
-
+    if (r.status >= 400 || r.data?.code !== 0) { sendLog(res, "warn", "transcode poll error"); await sleep(3000); continue; }
     const d = r.data.data;
-
-    // LOG FULL RESPONSE di poll pertama dan setiap 5 poll
-    if (i === 0 || i % 5 === 0) {
-      sendLog(res, "debug", "Transcode poll #" + (i + 1) + " FULL RESPONSE:", d);
-    }
-
-    // Cek SEMUA kemungkinan field yang berisi URL video
-    const allKeys = d ? Object.keys(d) : [];
-    sendLog(res, "debug", "Transcode poll #" + (i + 1) + " keys: " + allKeys.join(", "));
-
-    // Coba extract URL dari berbagai field
-    const video = d?.video || d?.url || d?.source_url || d?.video_url || d?.file_url || d?.download_url || d?.src || "";
-    const transcoded = d?.video_transcoded || d?.transcoded_video || d?.transcoded_url || d?.trans_url || d?.result_url || d?.result || d?.output_url || d?.output || d?.enhanced_url || d?.processed_url || "";
-
-    // Cek status field
-    const status = d?.status || d?.state || d?.progress || d?.trans_status || d?.transcode_status || "";
-
+    if (i === 0 || i % 5 === 0) sendLog(res, "debug", "Transcode poll #" + (i+1) + " FULL:", d);
+    const status = d?.status || d?.state || "";
+    const video = d?.video || d?.url || d?.source_url || d?.video_url || "";
+    const transcoded = d?.video_transcoded || d?.transcoded_video || d?.transcoded_url || d?.trans_url || d?.result_url || "";
     sendEvt(res, "progress", { step: "transcode", attempt: i + 1 });
-    sendLog(res, "debug", "Transcode poll #" + (i + 1) + " status=" + status + " video=" + !!video + " transcoded=" + !!transcoded);
+    sendLog(res, "debug", "Transcode poll #" + (i+1) + " status=" + status + " video=" + !!video + " tc=" + !!transcoded);
 
-    // Kalau ada status yang menunjukkan selesai
-    if (status === "done" || status === "complete" || status === "success" || status === "finished" || status === 3 || status === 2) {
+    if (status === 2 || status === 3 || status === "done" || status === "complete") {
       sendLog(res, "success", "Transcode done (status=" + status + ")");
       return { source_url: video || fallback, video_transcoded: transcoded || video || fallback };
     }
-
-    // Kalau ada URL transcoded
     if (transcoded && typeof transcoded === "string" && transcoded.startsWith("http")) {
-      sendLog(res, "success", "Transcode done - found transcoded URL");
+      sendLog(res, "success", "Transcode done - found URL");
       return { source_url: video || fallback, video_transcoded: transcoded };
     }
-
-    // Kalau ada URL video (mungkin transcodenya langsung di field video)
-    if (video && typeof video === "string" && video.startsWith("http") && (status === "done" || status === "complete" || status === "success" || status === 3 || status === 2 || i > 20)) {
-      sendLog(res, "success", "Transcode done - using video URL (after " + (i + 1) + " polls)");
-      return { source_url: video, video_transcoded: video };
-    }
-
-    // Setelah 30 poll, kalau ada URL apapun pakai saja
-    if (i > 30) {
-      const anyUrl = allKeys.find(k => typeof d[k] === "string" && d[k].startsWith("http"));
-      if (anyUrl) {
-        sendLog(res, "warn", "Transcode timeout but found URL in field '" + anyUrl + "', using it");
-        return { source_url: d[anyUrl], video_transcoded: d[anyUrl] };
-      }
-    }
-
     await sleep(3000);
   }
-
-  sendLog(res, "warn", "Transcode timeout after 60 polls, using fallback");
+  sendLog(res, "warn", "Transcode timeout");
   return { source_url: fallback, video_transcoded: fallback };
 }
 
-async function delivery(c, g, srcUrl, tcUrl, name, res) {
+async function delivery(c, g, srcUrl, tcUrl, name, guestData, res) {
   sendLog(res, "info", "Submitting AI task: " + name);
   sendLog(res, "debug", "source_url=" + (srcUrl || "").slice(0, 80) + " video_transcoded=" + (tcUrl || "").slice(0, 80));
+
+  // Build params with user info from guest registration
+  const extraParams = {};
+  if (guestData?.userData?.user_id || guestData?.userData?.uid) {
+    extraParams.user_id = guestData.userData.user_id || guestData.userData.uid;
+    sendLog(res, "debug", "Using user_id from registration: " + extraParams.user_id);
+  }
+  if (guestData?.userData?.token) {
+    extraParams.token = guestData.userData.token;
+  }
+  if (guestData?.deviceId) {
+    extraParams.device_id = guestData.deviceId;
+  }
+
   const b = baseParams(g, {
     type: TASK_TYPE, content_type: CONTENT_TYPE, source_url: srcUrl,
     type_params: JSON.stringify({is_mirror:0,orientation_tag:1,j_420_trans:"1",return_ext:"2"}),
     right_detail: JSON.stringify({source:"1",touch_type:"4",function_id:"630",material_id:"63011",url:"https://wink.ai/video-enhancer/upload"}),
     ext_params: JSON.stringify({task_name:name,records:TASK_TYPE,video_transcoded:tcUrl}),
     with_prepare: "1",
+    ...extraParams,
   });
+
+  sendLog(res, "debug", "Delivery params include: " + Object.keys(extraParams).join(", ") || "none");
+
   const r = await c.post("/api/meitu_ai/delivery.json", b.toString(), {headers:{...traceHeaders(),"content-type":"application/x-www-form-urlencoded;charset=UTF-8"}});
-  if (r.status >= 400 || r.data?.code !== 0) { sendLog(res, "error", "delivery FAILED", r.data); throw new Error("delivery gagal"); }
+  sendLog(res, "debug", "Delivery response:", r.data);
+
+  if (r.status >= 400 || r.data?.code !== 0) {
+    sendLog(res, "error", "delivery FAILED", { status: r.status, response: r.data });
+    throw new Error("delivery gagal: " + (r.data?.msg || safeStr(r.data)));
+  }
+
   const d = r.data.data || {};
   sendLog(res, "success", "Task submitted", { msg_id: d.msg_id, prepare_msg_id: d.prepare_msg_id });
   return d;
@@ -206,35 +259,28 @@ async function pollResult(c, g, firstId, res) {
   for (let i = 0; i < 120; i++) {
     const p = baseParams(g, { msg_ids: mid });
     const r = await c.get("/api/meitu_ai/query_batch.json?" + p, {headers:{...traceHeaders(),referer:BASE_URL+"/video-enhancer/upload"}});
-    if (r.status >= 400 || r.data?.code !== 0) { sendLog(res, "warn", "query error, retrying..."); await sleep(5000); continue; }
+    if (r.status >= 400 || r.data?.code !== 0) { sendLog(res, "warn", "query error"); await sleep(5000); continue; }
     const d = r.data.data;
     const item = d?.item_list?.[0];
-
-    // Log full response setiap 5 poll
-    if (i % 5 === 0) {
-      sendLog(res, "debug", "Enhance poll #" + (i + 1) + " item keys:", item ? Object.keys(item) : "no item");
-      if (item?.result) sendLog(res, "debug", "Enhance poll #" + (i + 1) + " result keys:", Object.keys(item.result));
-    }
-
+    if (i % 5 === 0 && item?.result) sendLog(res, "debug", "Enhance poll #" + (i+1) + " result:", item.result);
     const rv = item?.result?.result || "";
     const rm = item?.result?.msg_id || item?.msg_id || "";
-    if (rv && rv !== mid && !rv.startsWith("http")) { sendLog(res, "debug", "Redirect: " + rv); mid = rv; await sleep(1000); continue; }
-    if (rm && rm !== mid && !rm.startsWith("wpr_")) { sendLog(res, "debug", "Redirect: " + rm); mid = rm; await sleep(1000); continue; }
-
+    if (rv && rv !== mid && !rv.startsWith("http")) { mid = rv; await sleep(1000); continue; }
+    if (rm && rm !== mid && !rm.startsWith("wpr_")) { mid = rm; await sleep(1000); continue; }
     const media = item?.result?.media_info_list?.[0];
     const url = media?.media_data || item?.result?.result_url || item?.result?.url || item?.client_ext_params?.video_transcoded || "";
     const ec = item?.result?.error_code;
     const em = item?.result?.error_msg;
     sendEvt(res, "progress", { step: "enhance", attempt: i + 1 });
-    sendLog(res, "debug", "Enhance poll #" + (i + 1) + " ec=" + ec + " has_url=" + !!url);
-
-    if (url && url.startsWith("http") && ec === 0) { sendLog(res, "success", "DONE! Result ready"); return url; }
-    if (ec && ec !== 29901 && ec !== 0) { sendLog(res, "error", "Task failed: " + ec + " " + (em || "")); throw new Error("task gagal: " + ec + " " + (em || "")); }
+    sendLog(res, "debug", "Enhance poll #" + (i+1) + " ec=" + ec + " has_url=" + !!url);
+    if (url && url.startsWith("http") && ec === 0) { sendLog(res, "success", "DONE!"); return url; }
+    if (ec && ec !== 29901 && ec !== 0) { sendLog(res, "error", "Task failed: " + ec + " " + (em||"")); throw new Error("task gagal: " + ec + " " + (em||"")); }
     await sleep(5000);
   }
-  throw new Error("result timeout (10 min)");
+  throw new Error("result timeout");
 }
 
+// ============ MAIN HANDLER ============
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -260,20 +306,34 @@ export default async function handler(req, res) {
   try {
     const name = filename || "video-" + Date.now() + ".mp4";
     const taskName = "Enhancer-Ultra HD-" + path.parse(name).name;
-
     sendLog(res, "info", "=== START: " + name + " ===");
-    sendLog(res, "info", "Video URL: " + videoUrl);
 
+    // Step 1: Register guest user
+    sendEvt(res, "progress", { step: "init", message: "Registering guest user..." });
+    const guest = await registerGuest(res);
+    sendLog(res, "info", "Guest session: gnum=" + guest.gnum + " device=" + guest.deviceId);
+
+    // Step 2: Download video
+    sendEvt(res, "progress", { step: "download", message: "Downloading video..." });
     tmpPath = await downloadVideo(videoUrl, res);
 
-    const gnum = crypto.randomUUID();
+    // Step 3: Setup client with guest session
     const jar = new CookieJar();
-    await jar.setCookie("_sm=" + gnum + "; Path=/; Domain=wink.ai", BASE_URL);
-    await jar.setCookie("meitustat=" + encodeURIComponent(JSON.stringify({wgid:gnum})) + "; Path=/; Domain=wink.ai", BASE_URL);
-    const client = mkClient(gnum, jar);
+    await jar.setCookie("_sm=" + guest.gnum + "; Path=/; Domain=wink.ai", BASE_URL);
+    await jar.setCookie("meitustat=" + encodeURIComponent(JSON.stringify({wgid:guest.gnum})) + "; Path=/; Domain=wink.ai", BASE_URL);
+    if (guest.userData?.token) {
+      await jar.setCookie("token=" + guest.userData.token + "; Path=/; Domain=wink.ai", BASE_URL);
+    }
+    if (guest.userData?.user_id || guest.userData?.uid) {
+      const uid = guest.userData.user_id || guest.userData.uid;
+      await jar.setCookie("uid=" + uid + "; Path=/; Domain=wink.ai", BASE_URL);
+      sendLog(res, "debug", "Set cookie uid=" + uid);
+    }
+    const client = mkClient(guest.gnum, jar);
 
+    // Step 4: Wink AI pipeline
     sendEvt(res, "progress", { step: "sign" });
-    const sign = await getMaatSign(client, gnum, res);
+    const sign = await getMaatSign(client, guest.gnum, res);
 
     sendEvt(res, "progress", { step: "policy" });
     const policy = await getPolicy(sign, res);
@@ -282,19 +342,19 @@ export default async function handler(req, res) {
     const up = await uploadQiniu(policy, tmpPath, name, res);
 
     sendEvt(res, "progress", { step: "info" });
-    await getVideoInfo(client, gnum, up.file_key, res);
+    await getVideoInfo(client, guest.gnum, up.file_key, res);
 
     sendEvt(res, "progress", { step: "transcode_start" });
-    const tcId = await startTranscode(client, gnum, up.file_key, res);
-    const tc = await pollTranscode(client, gnum, tcId, up.source_url, res);
+    const tcId = await startTranscode(client, guest.gnum, up.file_key, res);
+    const tc = await pollTranscode(client, guest.gnum, tcId, up.source_url, res);
 
     sendEvt(res, "progress", { step: "delivery" });
-    const task = await delivery(client, gnum, tc.source_url, tc.video_transcoded, taskName, res);
+    const task = await delivery(client, guest.gnum, tc.source_url, tc.video_transcoded, taskName, guest, res);
     const msgId = task.msg_id || task.prepare_msg_id;
     if (!msgId) throw new Error("no msg_id");
 
     sendEvt(res, "progress", { step: "enhance" });
-    const resultUrl = await pollResult(client, gnum, msgId, res);
+    const resultUrl = await pollResult(client, guest.gnum, msgId, res);
 
     sendLog(res, "success", "=== COMPLETED ===");
     sendEvt(res, "result", { success: true, resultUrl, filename: name });
