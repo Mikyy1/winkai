@@ -23,11 +23,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const safeStr = (o) => { try { return typeof o === "string" ? o : JSON.stringify(o); } catch { return String(o); } };
 
 function makeTrace() {
-  return `${crypto.randomBytes(16).toString("hex")}-${crypto.randomBytes(8).toString("hex")}-1`;
+  return crypto.randomBytes(16).toString("hex") + "-" + crypto.randomBytes(8).toString("hex") + "-1";
 }
 function traceHeaders() {
   const t = makeTrace();
-  return { "sentry-trace": t, baggage: ["sentry-environment=release","sentry-release=5.1.2","sentry-public_key=e1bf914f3448d9bc8a10c7e499d17d54","sentry-trace_id="+t.split("-")[0],"sentry-sampled=true","sentry-sample_rate=0.75"].join(",") };
+  return { "sentry-trace": t, baggage: "sentry-environment=release,sentry-release=5.1.2,sentry-public_key=e1bf914f3448d9bc8a10c7e499d17d54,sentry-trace_id=" + t.split("-")[0] + ",sentry-sampled=true,sentry-sample_rate=0.75" };
 }
 function extToMime(f) {
   const e = path.extname(f).toLowerCase();
@@ -43,45 +43,26 @@ function sendEvt(r,e,d){try{r.write("event: "+e+"\ndata: "+JSON.stringify(d)+"\n
 function sendLog(r,lv,msg,det=null){
   const ts=new Date().toISOString().slice(11,23);
   sendEvt(r,"log",{level:lv,message:msg,detail:det?safeStr(det):null,ts});
-  console.log("["+ts+"] ["+lv+"] "+msg,det?safeStr(det).slice(0,300):"");
+  console.log("["+ts+"] ["+lv+"] "+msg,det?safeStr(det).slice(0,500):"");
 }
 
 async function downloadVideo(url, res) {
   sendLog(res, "info", "Downloading video from: " + url.slice(0, 100));
   sendEvt(res, "progress", { step: "download", message: "Downloading your video...", pct: 0 });
-
   const tmpPath = path.join(os.tmpdir(), "wink-" + crypto.randomUUID() + ".mp4");
-
-  const r = await axios.get(url, {
-    responseType: "stream",
-    timeout: 120000,
-    headers: { "user-agent": UA, accept: "*/*" },
-    maxRedirects: 5,
-  });
-
+  const r = await axios.get(url, { responseType: "stream", timeout: 120000, headers: { "user-agent": UA, accept: "*/*" }, maxRedirects: 5 });
   const total = parseInt(r.headers["content-length"] || "0");
   sendLog(res, "info", "File size: " + (total / 1024 / 1024).toFixed(2) + " MB, type: " + (r.headers["content-type"] || "unknown"));
-
-  let downloaded = 0;
-  let lastPct = -1;
+  let downloaded = 0, lastPct = -1;
   const writer = fs.createWriteStream(tmpPath);
-
   r.data.on("data", (chunk) => {
     downloaded += chunk.length;
-    if (total) {
-      const pct = Math.round((downloaded / total) * 100);
-      if (pct !== lastPct && pct % 10 === 0) {
-        sendEvt(res, "progress", { step: "download", pct });
-        lastPct = pct;
-      }
-    }
+    if (total) { const pct = Math.round((downloaded / total) * 100); if (pct !== lastPct && pct % 10 === 0) { sendEvt(res, "progress", { step: "download", pct }); lastPct = pct; } }
   });
-
   r.data.pipe(writer);
   await new Promise((ok, fail) => { writer.on("finish", ok); writer.on("error", fail); });
-
   const stat = await fsp.stat(tmpPath);
-  sendLog(res, "success", "Downloaded: " + (stat.size / 1024 / 1024).toFixed(2) + " MB to " + tmpPath);
+  sendLog(res, "success", "Downloaded: " + (stat.size / 1024 / 1024).toFixed(2) + " MB");
   return tmpPath;
 }
 
@@ -107,9 +88,7 @@ async function uploadQiniu(policy, filePath, filename, res) {
   sendLog(res, "info", "Uploading to Qiniu CDN...");
   const form = new FormData();
   form.append("file", fs.createReadStream(filePath), { filename, contentType: extToMime(filename) });
-  form.append("token", policy.token);
-  form.append("key", policy.key);
-  form.append("fname", filename);
+  form.append("token", policy.token); form.append("key", policy.key); form.append("fname", filename);
   const r = await axios.post(policy.url, form, {
     headers: form.getHeaders({origin:BASE_URL,referer:BASE_URL+"/","user-agent":UA,accept:"*/*"}),
     maxBodyLength: Infinity, maxContentLength: Infinity, validateStatus: () => true,
@@ -143,21 +122,70 @@ async function pollTranscode(c, g, id, fallback, res) {
   for (let i = 0; i < 60; i++) {
     const p = baseParams(g, { id });
     const r = await c.get("/api/file/video_trans_query.json?" + p, { headers: traceHeaders() });
-    if (r.status >= 400 || r.data?.code !== 0) { sendLog(res, "warn", "transcode poll error, retrying..."); await sleep(3000); continue; }
+    if (r.status >= 400 || r.data?.code !== 0) {
+      sendLog(res, "warn", "transcode poll error", { status: r.status, data: r.data });
+      await sleep(3000);
+      continue;
+    }
+
     const d = r.data.data;
-    const v = d?.video || d?.url || d?.source_url || "";
-    const tc = d?.video_transcoded || d?.transcoded_video || d?.transcoded_url || d?.video_url || "";
+
+    // LOG FULL RESPONSE di poll pertama dan setiap 5 poll
+    if (i === 0 || i % 5 === 0) {
+      sendLog(res, "debug", "Transcode poll #" + (i + 1) + " FULL RESPONSE:", d);
+    }
+
+    // Cek SEMUA kemungkinan field yang berisi URL video
+    const allKeys = d ? Object.keys(d) : [];
+    sendLog(res, "debug", "Transcode poll #" + (i + 1) + " keys: " + allKeys.join(", "));
+
+    // Coba extract URL dari berbagai field
+    const video = d?.video || d?.url || d?.source_url || d?.video_url || d?.file_url || d?.download_url || d?.src || "";
+    const transcoded = d?.video_transcoded || d?.transcoded_video || d?.transcoded_url || d?.trans_url || d?.result_url || d?.result || d?.output_url || d?.output || d?.enhanced_url || d?.processed_url || "";
+
+    // Cek status field
+    const status = d?.status || d?.state || d?.progress || d?.trans_status || d?.transcode_status || "";
+
     sendEvt(res, "progress", { step: "transcode", attempt: i + 1 });
-    sendLog(res, "debug", "Transcode poll #" + (i + 1), { has_tc: !!tc });
-    if (tc) { sendLog(res, "success", "Transcode done"); return { source_url: v || fallback, video_transcoded: tc }; }
+    sendLog(res, "debug", "Transcode poll #" + (i + 1) + " status=" + status + " video=" + !!video + " transcoded=" + !!transcoded);
+
+    // Kalau ada status yang menunjukkan selesai
+    if (status === "done" || status === "complete" || status === "success" || status === "finished" || status === 3 || status === 2) {
+      sendLog(res, "success", "Transcode done (status=" + status + ")");
+      return { source_url: video || fallback, video_transcoded: transcoded || video || fallback };
+    }
+
+    // Kalau ada URL transcoded
+    if (transcoded && typeof transcoded === "string" && transcoded.startsWith("http")) {
+      sendLog(res, "success", "Transcode done - found transcoded URL");
+      return { source_url: video || fallback, video_transcoded: transcoded };
+    }
+
+    // Kalau ada URL video (mungkin transcodenya langsung di field video)
+    if (video && typeof video === "string" && video.startsWith("http") && (status === "done" || status === "complete" || status === "success" || status === 3 || status === 2 || i > 20)) {
+      sendLog(res, "success", "Transcode done - using video URL (after " + (i + 1) + " polls)");
+      return { source_url: video, video_transcoded: video };
+    }
+
+    // Setelah 30 poll, kalau ada URL apapun pakai saja
+    if (i > 30) {
+      const anyUrl = allKeys.find(k => typeof d[k] === "string" && d[k].startsWith("http"));
+      if (anyUrl) {
+        sendLog(res, "warn", "Transcode timeout but found URL in field '" + anyUrl + "', using it");
+        return { source_url: d[anyUrl], video_transcoded: d[anyUrl] };
+      }
+    }
+
     await sleep(3000);
   }
-  sendLog(res, "warn", "Transcode timeout");
+
+  sendLog(res, "warn", "Transcode timeout after 60 polls, using fallback");
   return { source_url: fallback, video_transcoded: fallback };
 }
 
 async function delivery(c, g, srcUrl, tcUrl, name, res) {
   sendLog(res, "info", "Submitting AI task: " + name);
+  sendLog(res, "debug", "source_url=" + (srcUrl || "").slice(0, 80) + " video_transcoded=" + (tcUrl || "").slice(0, 80));
   const b = baseParams(g, {
     type: TASK_TYPE, content_type: CONTENT_TYPE, source_url: srcUrl,
     type_params: JSON.stringify({is_mirror:0,orientation_tag:1,j_420_trans:"1",return_ext:"2"}),
@@ -168,7 +196,7 @@ async function delivery(c, g, srcUrl, tcUrl, name, res) {
   const r = await c.post("/api/meitu_ai/delivery.json", b.toString(), {headers:{...traceHeaders(),"content-type":"application/x-www-form-urlencoded;charset=UTF-8"}});
   if (r.status >= 400 || r.data?.code !== 0) { sendLog(res, "error", "delivery FAILED", r.data); throw new Error("delivery gagal"); }
   const d = r.data.data || {};
-  sendLog(res, "success", "Task submitted", { msg_id: d.msg_id });
+  sendLog(res, "success", "Task submitted", { msg_id: d.msg_id, prepare_msg_id: d.prepare_msg_id });
   return d;
 }
 
@@ -181,16 +209,25 @@ async function pollResult(c, g, firstId, res) {
     if (r.status >= 400 || r.data?.code !== 0) { sendLog(res, "warn", "query error, retrying..."); await sleep(5000); continue; }
     const d = r.data.data;
     const item = d?.item_list?.[0];
+
+    // Log full response setiap 5 poll
+    if (i % 5 === 0) {
+      sendLog(res, "debug", "Enhance poll #" + (i + 1) + " item keys:", item ? Object.keys(item) : "no item");
+      if (item?.result) sendLog(res, "debug", "Enhance poll #" + (i + 1) + " result keys:", Object.keys(item.result));
+    }
+
     const rv = item?.result?.result || "";
     const rm = item?.result?.msg_id || item?.msg_id || "";
     if (rv && rv !== mid && !rv.startsWith("http")) { sendLog(res, "debug", "Redirect: " + rv); mid = rv; await sleep(1000); continue; }
     if (rm && rm !== mid && !rm.startsWith("wpr_")) { sendLog(res, "debug", "Redirect: " + rm); mid = rm; await sleep(1000); continue; }
+
     const media = item?.result?.media_info_list?.[0];
     const url = media?.media_data || item?.result?.result_url || item?.result?.url || item?.client_ext_params?.video_transcoded || "";
     const ec = item?.result?.error_code;
     const em = item?.result?.error_msg;
     sendEvt(res, "progress", { step: "enhance", attempt: i + 1 });
-    sendLog(res, "debug", "Enhance poll #" + (i + 1), { ec, has_url: !!url });
+    sendLog(res, "debug", "Enhance poll #" + (i + 1) + " ec=" + ec + " has_url=" + !!url);
+
     if (url && url.startsWith("http") && ec === 0) { sendLog(res, "success", "DONE! Result ready"); return url; }
     if (ec && ec !== 29901 && ec !== 0) { sendLog(res, "error", "Task failed: " + ec + " " + (em || "")); throw new Error("task gagal: " + ec + " " + (em || "")); }
     await sleep(5000);
