@@ -2,9 +2,11 @@ import axios from "axios";
 import FormData from "form-data";
 import crypto from "node:crypto";
 import path from "node:path";
+import fs from "node:fs";
+import fsp from "node:fs/promises";
+import os from "node:os";
 import { CookieJar } from "tough-cookie";
 import { wrapper } from "axios-cookiejar-support";
-import multer from "multer";
 
 const BASE_URL = "https://wink.ai";
 const STRATEGY_URL = "https://strategy.app.meitudata.com";
@@ -16,15 +18,6 @@ const CLIENT_TIMEZONE = "Asia/Jakarta";
 const TASK_TYPE = "11";
 const CONTENT_TYPE = "2";
 const UA = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36";
-
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 200 * 1024 * 1024 } });
-const uploadMiddleware = upload.single("video");
-
-function runMiddleware(req, res, fn) {
-  return new Promise((resolve, reject) => {
-    fn(req, res, (r) => r instanceof Error ? reject(r) : resolve(r));
-  });
-}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -74,12 +67,31 @@ function sendEvent(res, event, data) {
 
 function sendLog(res, level, message, detail = null) {
   const ts = new Date().toISOString().slice(11, 23);
-  sendEvent(res, "log", { level, message, detail: detail ? safeStringify(detail) : null, ts });
-  console.log(`[${ts}] [${level}] ${message}`, detail ? safeStringify(detail).slice(0, 300) : "");
+  sendEvent(res, "log", { level, message, detail: detail ? safeStr(detail) : null, ts });
+  console.log(`[${ts}] [${level}] ${message}`, detail ? safeStr(detail).slice(0, 300) : "");
 }
 
-function safeStringify(obj) {
+function safeStr(obj) {
   try { return typeof obj === "string" ? obj : JSON.stringify(obj); } catch { return String(obj); }
+}
+
+async function downloadToTmp(url, res) {
+  sendLog(res, "info", `Downloading video from temp storage: ${url.slice(0, 80)}...`);
+  const tmpPath = path.join(os.tmpdir(), `wink-${crypto.randomUUID()}.mp4`);
+  const r = await axios.get(url, { responseType: "stream", timeout: 60000, headers: { "user-agent": UA } });
+  const size = parseInt(r.headers["content-length"] || "0");
+  sendLog(res, "info", `File size: ${(size/1024/1024).toFixed(2)} MB`);
+  let downloaded = 0;
+  const writer = fs.createWriteStream(tmpPath);
+  r.data.on("data", (chunk) => {
+    downloaded += chunk.length;
+    const pct = size ? Math.round((downloaded / size) * 100) : 0;
+    if (pct % 20 === 0) sendEvent(res, "progress", { step: "download", pct });
+  });
+  r.data.pipe(writer);
+  await new Promise((resolve, reject) => { writer.on("finish", resolve); writer.on("error", reject); });
+  sendLog(res, "success", `Downloaded to ${tmpPath} (${(downloaded/1024/1024).toFixed(2)} MB)`);
+  return tmpPath;
 }
 
 async function getMaatSign(client, gnum, res) {
@@ -90,7 +102,7 @@ async function getMaatSign(client, gnum, res) {
     sendLog(res, "error", "get_maat_sign FAILED", { status: r.status, response: r.data });
     throw new Error(`get_maat_sign gagal: HTTP ${r.status}, code=${r.data?.code}`);
   }
-  sendLog(res, "success", "Upload sign OK", { app: r.data.data?.app, type: r.data.data?.type });
+  sendLog(res, "success", "Upload sign OK", { app: r.data.data?.app });
   return r.data.data;
 }
 
@@ -112,17 +124,17 @@ async function getUploadPolicy(sign, res) {
   return r.data[0].qiniu;
 }
 
-async function uploadToQiniu(policy, fileBuffer, filename, onProgress, res) {
-  sendLog(res, "info", `Uploading ${filename} (${(fileBuffer.length/1024/1024).toFixed(2)} MB) to Qiniu...`);
+async function uploadToQiniu(policy, filePath, filename, res) {
+  sendLog(res, "info", `Uploading ${filename} to Qiniu CDN...`);
   const form = new FormData();
-  form.append("file", fileBuffer, { filename, contentType: extToMime(filename) });
+  form.append("file", fs.createReadStream(filePath), { filename, contentType: extToMime(filename) });
   form.append("token", policy.token);
   form.append("key", policy.key);
   form.append("fname", filename);
   const r = await axios.post(policy.url, form, {
     headers: form.getHeaders({ origin: BASE_URL, referer: `${BASE_URL}/`, "user-agent": UA, accept: "*/*" }),
     maxBodyLength: Infinity, maxContentLength: Infinity, validateStatus: () => true,
-    onUploadProgress: (p) => { if (p.total && onProgress) onProgress(Math.round((p.loaded / p.total) * 100)); },
+    onUploadProgress: (p) => { if (p.total) sendEvent(res, "progress", { step: "upload", pct: Math.round((p.loaded/p.total)*100) }); },
   });
   if (r.status >= 400) {
     sendLog(res, "error", "Qiniu upload FAILED", { status: r.status, response: r.data });
@@ -140,7 +152,7 @@ async function getVideoInfo(client, gnum, fileKey, res) {
   });
   if (r.status >= 400 || r.data?.code !== 0) {
     sendLog(res, "error", "getVideoInfo FAILED", { status: r.status, response: r.data });
-    throw new Error(`video info gagal: ${safeStringify(r.data)}`);
+    throw new Error(`video info gagal`);
   }
   sendLog(res, "success", "Video info OK");
   return r.data.data;
@@ -160,31 +172,25 @@ async function startTranscode(client, gnum, fileKey, res) {
   return r.data.data.id;
 }
 
-async function queryTranscode(client, gnum, id, res) {
+async function queryTranscode(client, gnum, id) {
   const params = baseParams(gnum, { id });
   const r = await client.get(`/api/file/video_trans_query.json?${params}`, { headers: traceHeaders() });
-  if (r.status >= 400 || r.data?.code !== 0) {
-    sendLog(res, "error", "queryTranscode FAILED", { status: r.status, response: r.data });
-    throw new Error(`transcode query gagal`);
-  }
+  if (r.status >= 400 || r.data?.code !== 0) throw new Error(`transcode query gagal`);
   return r.data.data;
 }
 
 async function waitTranscode(client, gnum, id, fallback, res) {
-  sendLog(res, "info", "Waiting for transcode to complete (polling every 3s)...");
+  sendLog(res, "info", "Waiting for transcode (polling every 3s)...");
   for (let i = 0; i < 60; i++) {
-    const data = await queryTranscode(client, gnum, id, res);
+    const data = await queryTranscode(client, gnum, id);
     const video = data?.video || data?.url || data?.source_url || "";
     const transcoded = data?.video_transcoded || data?.transcoded_video || data?.transcoded_url || data?.video_url || "";
     sendEvent(res, "progress", { step: "transcode", attempt: i + 1 });
-    sendLog(res, "debug", `Transcode poll #${i+1}`, { status: data?.status, has_transcoded: !!transcoded });
-    if (transcoded) {
-      sendLog(res, "success", "Transcode completed");
-      return { source_url: video || fallback, video_transcoded: transcoded };
-    }
+    sendLog(res, "debug", `Transcode poll #${i+1}`, { has_transcoded: !!transcoded });
+    if (transcoded) { sendLog(res, "success", "Transcode completed"); return { source_url: video || fallback, video_transcoded: transcoded }; }
     await sleep(3000);
   }
-  sendLog(res, "warn", "Transcode timeout, using fallback URL");
+  sendLog(res, "warn", "Transcode timeout, using fallback");
   return { source_url: fallback, video_transcoded: fallback };
 }
 
@@ -202,22 +208,19 @@ async function delivery(client, gnum, sourceUrl, videoTranscoded, taskName, res)
   });
   if (r.status >= 400 || r.data?.code !== 0) {
     sendLog(res, "error", "delivery FAILED", { status: r.status, response: r.data });
-    throw new Error(`delivery gagal: ${safeStringify(r.data)}`);
+    throw new Error(`delivery gagal`);
   }
   const data = r.data.data || {};
   sendLog(res, "success", "Task submitted", { msg_id: data.msg_id, prepare_msg_id: data.prepare_msg_id });
   return data;
 }
 
-async function queryBatch(client, gnum, msgId, res) {
+async function queryBatch(client, gnum, msgId) {
   const params = baseParams(gnum, { msg_ids: msgId });
   const r = await client.get(`/api/meitu_ai/query_batch.json?${params}`, {
     headers: { ...traceHeaders(), referer: `${BASE_URL}/video-enhancer/upload` },
   });
-  if (r.status >= 400 || r.data?.code !== 0) {
-    sendLog(res, "error", "queryBatch FAILED", { status: r.status, msgId, response: r.data });
-    throw new Error(`query batch gagal`);
-  }
+  if (r.status >= 400 || r.data?.code !== 0) throw new Error(`query batch gagal`);
   return r.data.data;
 }
 
@@ -239,28 +242,17 @@ function extractNextMsgId(data, currentMsgId) {
 async function waitResult(client, gnum, firstMsgId, res) {
   sendLog(res, "info", `Waiting for enhancement result (msg_id: ${firstMsgId})...`);
   let msgId = firstMsgId;
-  for (let i = 0; i < 60; i++) {
-    const data = await queryBatch(client, gnum, msgId, res);
+  for (let i = 0; i < 120; i++) {
+    const data = await queryBatch(client, gnum, msgId);
     const next = extractNextMsgId(data, msgId);
-    if (next) {
-      sendLog(res, "debug", `Redirect to new msg_id: ${next}`);
-      msgId = next;
-      await sleep(1000);
-      continue;
-    }
+    if (next) { sendLog(res, "debug", `Redirect to new msg_id: ${next}`); msgId = next; await sleep(1000); continue; }
     const url = extractResultUrl(data);
     const errCode = data?.item_list?.[0]?.result?.error_code;
     const errMsg = data?.item_list?.[0]?.result?.error_msg;
     sendEvent(res, "progress", { step: "enhance", attempt: i + 1 });
     sendLog(res, "debug", `Enhance poll #${i+1}`, { error_code: errCode, has_url: !!url });
-    if (url && url.startsWith("http") && errCode === 0) {
-      sendLog(res, "success", "Enhancement DONE! Result URL received");
-      return url;
-    }
-    if (errCode && errCode !== 29901 && errCode !== 0) {
-      sendLog(res, "error", `Task failed on server: code=${errCode} msg=${errMsg || "-"}`);
-      throw new Error(`task gagal: ${errCode} ${errMsg || ""}`);
-    }
+    if (url && url.startsWith("http") && errCode === 0) { sendLog(res, "success", "Enhancement DONE!"); return url; }
+    if (errCode && errCode !== 29901 && errCode !== 0) { sendLog(res, "error", `Task failed: code=${errCode} msg=${errMsg || "-"}`); throw new Error(`task gagal: ${errCode} ${errMsg || ""}`); }
     await sleep(5000);
   }
   sendLog(res, "error", "Timeout waiting for result");
@@ -274,10 +266,13 @@ export default async function handler(req, res) {
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  try { await runMiddleware(req, res, uploadMiddleware); }
-  catch (e) { return res.status(400).json({ error: e.message }); }
+  let body = "";
+  for await (const chunk of req) body += chunk;
+  let parsed;
+  try { parsed = JSON.parse(body); } catch { return res.status(400).json({ error: "Invalid JSON" }); }
 
-  if (!req.file) return res.status(400).json({ error: "File video diperlukan" });
+  const { videoUrl, filename } = parsed;
+  if (!videoUrl) return res.status(400).json({ error: "videoUrl diperlukan" });
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -285,14 +280,17 @@ export default async function handler(req, res) {
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders?.();
 
+  let tmpPath = null;
   try {
-    const filename = req.file.originalname || `video-${Date.now()}.mp4`;
-    const fileBuffer = req.file.buffer;
-    const taskName = `Enhancer-Ultra HD-${path.parse(filename).name}`;
+    const safeName = filename || `video-${Date.now()}.mp4`;
+    const taskName = `Enhancer-Ultra HD-${path.parse(safeName).name}`;
 
-    sendLog(res, "info", `=== NEW REQUEST: ${filename} (${(fileBuffer.length/1024/1024).toFixed(2)} MB) ===`);
+    sendLog(res, "info", `=== NEW REQUEST: ${safeName} ===`);
+    sendEvent(res, "progress", { step: "download", message: "Downloading video from temp storage...", pct: 0 });
+
+    tmpPath = await downloadToTmp(videoUrl, res);
+
     sendEvent(res, "progress", { step: "init", message: "Starting session..." });
-
     const gnum = crypto.randomUUID();
     sendLog(res, "debug", `Session gnum: ${gnum}`);
     const jar = new CookieJar();
@@ -306,10 +304,8 @@ export default async function handler(req, res) {
     sendEvent(res, "progress", { step: "policy", message: "Getting upload policy..." });
     const policy = await getUploadPolicy(sign, res);
 
-    sendEvent(res, "progress", { step: "upload", message: "Uploading video...", pct: 0 });
-    const uploaded = await uploadToQiniu(policy, fileBuffer, filename, (pct) => {
-      sendEvent(res, "progress", { step: "upload", pct });
-    }, res);
+    sendEvent(res, "progress", { step: "upload", message: "Uploading to Qiniu CDN...", pct: 0 });
+    const uploaded = await uploadToQiniu(policy, tmpPath, safeName, res);
 
     sendEvent(res, "progress", { step: "info", message: "Processing video metadata..." });
     await getVideoInfo(client, gnum, uploaded.file_key, res);
@@ -327,13 +323,15 @@ export default async function handler(req, res) {
     const resultUrl = await waitResult(client, gnum, firstMsgId, res);
 
     sendLog(res, "success", "=== REQUEST COMPLETED SUCCESSFULLY ===");
-    sendEvent(res, "result", { success: true, resultUrl, filename });
+    sendEvent(res, "result", { success: true, resultUrl, filename: safeName });
     res.end();
   } catch (err) {
     console.error("Enhance error:", err);
     sendLog(res, "fatal", `REQUEST FAILED: ${err.message}`, { stack: err.stack });
     sendEvent(res, "error", { message: err.message || "Internal error" });
     res.end();
+  } finally {
+    if (tmpPath) { try { await fsp.unlink(tmpPath); } catch {} }
   }
 }
 
