@@ -20,188 +20,182 @@ const CONTENT_TYPE = "2";
 const UA = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const safeStr = (o) => { try { return typeof o === "string" ? o : JSON.stringify(o); } catch { return String(o); } };
 
 function makeTrace() {
   return `${crypto.randomBytes(16).toString("hex")}-${crypto.randomBytes(8).toString("hex")}-1`;
 }
 function traceHeaders() {
-  const trace = makeTrace();
-  return {
-    "sentry-trace": trace,
-    baggage: ["sentry-environment=release","sentry-release=5.1.2%20(b60d25c477f43c6dfac4107810f26d442320f4f1)","sentry-public_key=e1bf914f3448d9bc8a10c7e499d17d54",`sentry-trace_id=${trace.split("-")[0]}`,"sentry-sampled=true","sentry-sample_rate=0.75"].join(","),
-  };
+  const t = makeTrace();
+  return { "sentry-trace": t, baggage: ["sentry-environment=release","sentry-release=5.1.2","sentry-public_key=e1bf914f3448d9bc8a10c7e499d17d54","sentry-trace_id="+t.split("-")[0],"sentry-sampled=true","sentry-sample_rate=0.75"].join(",") };
 }
 function extToMime(f) {
   const e = path.extname(f).toLowerCase();
-  return {".mp4":"video/mp4",".mov":"video/quicktime",".webm":"video/webm",".mkv":"video/x-matroska"}[e] || "application/octet-stream";
+  return {".mp4":"video/mp4",".mov":"video/quicktime",".webm":"video/webm",".mkv":"video/x-matroska"}[e]||"application/octet-stream";
 }
-function baseParams(gnum, extra = {}) {
-  return new URLSearchParams({client_id:CLIENT_ID,version:VERSION,country_code:COUNTRY_CODE,gnum,client_language:CLIENT_LANGUAGE,client_channel_id:"",client_timezone:CLIENT_TIMEZONE,...extra});
+function baseParams(g, x={}) {
+  return new URLSearchParams({client_id:CLIENT_ID,version:VERSION,country_code:COUNTRY_CODE,gnum:g,client_language:CLIENT_LANGUAGE,client_channel_id:"",client_timezone:CLIENT_TIMEZONE,...x});
 }
-function createApiClient(gnum, jar) {
-  return wrapper(axios.create({
-    baseURL: BASE_URL, jar, withCredentials: true, validateStatus: () => true,
-    headers: {accept:"*/*",origin:BASE_URL,referer:`${BASE_URL}/video-enhancer/upload`,"user-agent":UA,"sec-ch-ua":'"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"',"sec-ch-ua-mobile":"?1","sec-ch-ua-platform":'"Android"',ab_info:JSON.stringify({ab_codes:[],version:"1.4.4"})},
-  }));
+function mkClient(g, jar) {
+  return wrapper(axios.create({baseURL:BASE_URL,jar,withCredentials:true,validateStatus:()=>true,headers:{accept:"*/*",origin:BASE_URL,referer:BASE_URL+"/video-enhancer/upload","user-agent":UA,"sec-ch-ua":'"Chromium";v="147"',"sec-ch-ua-mobile":"?1","sec-ch-ua-platform":'"Android"',ab_info:JSON.stringify({ab_codes:[],version:"1.4.4"})}}));
 }
-function sendEvent(res, event, data) { try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch {} }
-function sendLog(res, level, message, detail = null) {
-  const ts = new Date().toISOString().slice(11, 23);
-  sendEvent(res, "log", { level, message, detail: detail ? safeStr(detail) : null, ts });
-  console.log(`[${ts}] [${level}] ${message}`, detail ? safeStr(detail).slice(0, 300) : "");
+function sendEvt(r,e,d){try{r.write("event: "+e+"\ndata: "+JSON.stringify(d)+"\n\n");}catch{}}
+function sendLog(r,lv,msg,det=null){
+  const ts=new Date().toISOString().slice(11,23);
+  sendEvt(r,"log",{level:lv,message:msg,detail:det?safeStr(det):null,ts});
+  console.log("["+ts+"] ["+lv+"] "+msg,det?safeStr(det).slice(0,300):"");
 }
-function safeStr(obj) { try { return typeof obj === "string" ? obj : JSON.stringify(obj); } catch { return String(obj); } }
 
-async function reassembleFile(uploadId, totalChunks, res) {
-  const dir = path.join(os.tmpdir(), "wink-uploads", uploadId);
-  sendLog(res, "info", `Reassembling ${totalChunks} chunks from ${dir}...`);
+async function downloadVideo(url, res) {
+  sendLog(res, "info", "Downloading video from: " + url.slice(0, 100));
+  sendEvt(res, "progress", { step: "download", message: "Downloading your video...", pct: 0 });
 
-  try {
-    const files = await fsp.readdir(dir);
-    const chunkFiles = files.filter(f => f.startsWith("chunk_")).sort();
-    sendLog(res, "debug", `Found ${chunkFiles.length}/${totalChunks} chunks`);
+  const tmpPath = path.join(os.tmpdir(), "wink-" + crypto.randomUUID() + ".mp4");
 
-    if (chunkFiles.length !== totalChunks) {
-      throw new Error(`Chunks incomplete: ${chunkFiles.length}/${totalChunks}. Please retry.`);
+  const r = await axios.get(url, {
+    responseType: "stream",
+    timeout: 120000,
+    headers: { "user-agent": UA, accept: "*/*" },
+    maxRedirects: 5,
+  });
+
+  const total = parseInt(r.headers["content-length"] || "0");
+  sendLog(res, "info", "File size: " + (total / 1024 / 1024).toFixed(2) + " MB, type: " + (r.headers["content-type"] || "unknown"));
+
+  let downloaded = 0;
+  let lastPct = -1;
+  const writer = fs.createWriteStream(tmpPath);
+
+  r.data.on("data", (chunk) => {
+    downloaded += chunk.length;
+    if (total) {
+      const pct = Math.round((downloaded / total) * 100);
+      if (pct !== lastPct && pct % 10 === 0) {
+        sendEvt(res, "progress", { step: "download", pct });
+        lastPct = pct;
+      }
     }
+  });
 
-    const outPath = path.join(os.tmpdir(), `wink-${uploadId}.mp4`);
-    const writer = fs.createWriteStream(outPath);
-    let totalSize = 0;
+  r.data.pipe(writer);
+  await new Promise((ok, fail) => { writer.on("finish", ok); writer.on("error", fail); });
 
-    for (const cf of chunkFiles) {
-      const data = await fsp.readFile(path.join(dir, cf));
-      writer.write(data);
-      totalSize += data.length;
-    }
-    writer.end();
-    await new Promise(r => writer.on("finish", r));
-
-    sendLog(res, "success", `File reassembled: ${(totalSize/1024/1024).toFixed(2)} MB`);
-
-    try { await fsp.rm(dir, { recursive: true, force: true }); } catch {}
-
-    return outPath;
-  } catch (err) {
-    sendLog(res, "error", `Reassembly failed: ${err.message}`);
-    throw err;
-  }
+  const stat = await fsp.stat(tmpPath);
+  sendLog(res, "success", "Downloaded: " + (stat.size / 1024 / 1024).toFixed(2) + " MB to " + tmpPath);
+  return tmpPath;
 }
 
-async function getMaatSign(client, gnum, res) {
-  sendLog(res, "info", "Requesting upload sign from wink.ai...");
-  const params = baseParams(gnum, { suffix: ".mp4", type: "temp", count: "1" });
-  const r = await client.get(`/api/file/get_maat_sign.json?${params}`, { headers: traceHeaders() });
-  if (r.status >= 400 || r.data?.code !== 0) { sendLog(res, "error", "get_maat_sign FAILED", { status: r.status, response: r.data }); throw new Error(`get_maat_sign gagal`); }
+async function getMaatSign(c, g, res) {
+  sendLog(res, "info", "Getting upload sign...");
+  const p = baseParams(g, { suffix: ".mp4", type: "temp", count: "1" });
+  const r = await c.get("/api/file/get_maat_sign.json?" + p, { headers: traceHeaders() });
+  if (r.status >= 400 || r.data?.code !== 0) { sendLog(res, "error", "get_maat_sign FAILED", r.data); throw new Error("get_maat_sign gagal"); }
   sendLog(res, "success", "Upload sign OK");
   return r.data.data;
 }
-async function getUploadPolicy(sign, res) {
-  sendLog(res, "info", "Requesting upload policy...");
-  const params = new URLSearchParams({app:sign.app,count:String(sign.count),sig:sign.sig,sigTime:sign.sig_time,sigVersion:sign.sig_version,suffix:sign.suffix,type:sign.type});
-  const r = await axios.get(`${STRATEGY_URL}/upload/policy?${params}`, {headers:{accept:"*/*",origin:BASE_URL,referer:`${BASE_URL}/`,"user-agent":UA},validateStatus:()=>true});
-  if (r.status >= 400 || !Array.isArray(r.data) || !r.data[0]?.qiniu) { sendLog(res, "error", "getUploadPolicy FAILED", { status: r.status }); throw new Error(`upload policy gagal`); }
-  sendLog(res, "success", "Upload policy OK");
+
+async function getPolicy(sign, res) {
+  sendLog(res, "info", "Getting upload policy...");
+  const p = new URLSearchParams({app:sign.app,count:String(sign.count),sig:sign.sig,sigTime:sign.sig_time,sigVersion:sign.sig_version,suffix:sign.suffix,type:sign.type});
+  const r = await axios.get(STRATEGY_URL + "/upload/policy?" + p, {headers:{accept:"*/*",origin:BASE_URL,referer:BASE_URL+"/","user-agent":UA},validateStatus:()=>true});
+  if (r.status >= 400 || !Array.isArray(r.data) || !r.data[0]?.qiniu) { sendLog(res, "error", "getPolicy FAILED", r.data); throw new Error("upload policy gagal"); }
+  sendLog(res, "success", "Policy OK");
   return r.data[0].qiniu;
 }
-async function uploadToQiniu(policy, filePath, filename, res) {
-  sendLog(res, "info", `Uploading to Qiniu CDN (${filename})...`);
+
+async function uploadQiniu(policy, filePath, filename, res) {
+  sendLog(res, "info", "Uploading to Qiniu CDN...");
   const form = new FormData();
   form.append("file", fs.createReadStream(filePath), { filename, contentType: extToMime(filename) });
-  form.append("token", policy.token); form.append("key", policy.key); form.append("fname", filename);
+  form.append("token", policy.token);
+  form.append("key", policy.key);
+  form.append("fname", filename);
   const r = await axios.post(policy.url, form, {
-    headers: form.getHeaders({origin:BASE_URL,referer:`${BASE_URL}/`,"user-agent":UA,accept:"*/*"}),
+    headers: form.getHeaders({origin:BASE_URL,referer:BASE_URL+"/","user-agent":UA,accept:"*/*"}),
     maxBodyLength: Infinity, maxContentLength: Infinity, validateStatus: () => true,
-    onUploadProgress: (p) => { if (p.total) sendEvent(res, "progress", { step: "upload", pct: Math.round((p.loaded/p.total)*100) }); },
+    onUploadProgress: (p) => { if (p.total) sendEvt(res, "progress", { step: "upload", pct: Math.round((p.loaded / p.total) * 100) }); },
   });
-  if (r.status >= 400) { sendLog(res, "error", "Qiniu upload FAILED", { status: r.status, response: r.data }); throw new Error(`upload qiniu gagal`); }
-  sendLog(res, "success", "Qiniu upload OK");
-  return { file_key: policy.key, source_url: r.data.url || r.data.data || policy.data, raw: r.data };
+  if (r.status >= 400) { sendLog(res, "error", "Qiniu FAILED", { status: r.status, data: r.data }); throw new Error("qiniu upload gagal"); }
+  sendLog(res, "success", "Qiniu OK");
+  return { file_key: policy.key, source_url: r.data.url || r.data.data || policy.data };
 }
-async function getVideoInfo(client, gnum, fileKey, res) {
-  sendLog(res, "info", "Fetching video info...");
-  const body = baseParams(gnum, { file_key: fileKey });
-  const r = await client.post("/api/file/video_cover_and_display_info_ext.json", body.toString(), {headers:{...traceHeaders(),"content-type":"application/x-www-form-urlencoded;charset=UTF-8"}});
-  if (r.status >= 400 || r.data?.code !== 0) { sendLog(res, "error", "getVideoInfo FAILED", { response: r.data }); throw new Error(`video info gagal`); }
+
+async function getVideoInfo(c, g, fk, res) {
+  sendLog(res, "info", "Getting video info...");
+  const b = baseParams(g, { file_key: fk });
+  const r = await c.post("/api/file/video_cover_and_display_info_ext.json", b.toString(), {headers:{...traceHeaders(),"content-type":"application/x-www-form-urlencoded;charset=UTF-8"}});
+  if (r.status >= 400 || r.data?.code !== 0) { sendLog(res, "error", "videoInfo FAILED", r.data); throw new Error("video info gagal"); }
   sendLog(res, "success", "Video info OK");
   return r.data.data;
 }
-async function startTranscode(client, gnum, fileKey, res) {
+
+async function startTranscode(c, g, fk, res) {
   sendLog(res, "info", "Starting transcode...");
-  const body = baseParams(gnum, { file_key: fileKey });
-  const r = await client.post("/api/file/video_trans_start.json", body.toString(), {headers:{...traceHeaders(),"content-type":"application/x-www-form-urlencoded;charset=UTF-8"}});
-  if (r.status >= 400 || r.data?.code !== 0 || !r.data?.data?.id) { sendLog(res, "error", "startTranscode FAILED", { response: r.data }); throw new Error(`transcode gagal`); }
-  sendLog(res, "success", `Transcode started id=${r.data.data.id}`);
+  const b = baseParams(g, { file_key: fk });
+  const r = await c.post("/api/file/video_trans_start.json", b.toString(), {headers:{...traceHeaders(),"content-type":"application/x-www-form-urlencoded;charset=UTF-8"}});
+  if (r.status >= 400 || r.data?.code !== 0 || !r.data?.data?.id) { sendLog(res, "error", "transcode FAILED", r.data); throw new Error("transcode gagal"); }
+  sendLog(res, "success", "Transcode started id=" + r.data.data.id);
   return r.data.data.id;
 }
-async function queryTranscode(client, gnum, id) {
-  const params = baseParams(gnum, { id });
-  const r = await client.get(`/api/file/video_trans_query.json?${params}`, { headers: traceHeaders() });
-  if (r.status >= 400 || r.data?.code !== 0) throw new Error(`transcode query gagal`);
-  return r.data.data;
-}
-async function waitTranscode(client, gnum, id, fallback, res) {
-  sendLog(res, "info", "Waiting for transcode (polling 3s)...");
+
+async function pollTranscode(c, g, id, fallback, res) {
+  sendLog(res, "info", "Polling transcode (every 3s)...");
   for (let i = 0; i < 60; i++) {
-    const data = await queryTranscode(client, gnum, id);
-    const video = data?.video || data?.url || data?.source_url || "";
-    const transcoded = data?.video_transcoded || data?.transcoded_video || data?.transcoded_url || data?.video_url || "";
-    sendEvent(res, "progress", { step: "transcode", attempt: i + 1 });
-    sendLog(res, "debug", `Transcode poll #${i+1}`, { has_transcoded: !!transcoded });
-    if (transcoded) { sendLog(res, "success", "Transcode done"); return { source_url: video || fallback, video_transcoded: transcoded }; }
+    const p = baseParams(g, { id });
+    const r = await c.get("/api/file/video_trans_query.json?" + p, { headers: traceHeaders() });
+    if (r.status >= 400 || r.data?.code !== 0) { sendLog(res, "warn", "transcode poll error, retrying..."); await sleep(3000); continue; }
+    const d = r.data.data;
+    const v = d?.video || d?.url || d?.source_url || "";
+    const tc = d?.video_transcoded || d?.transcoded_video || d?.transcoded_url || d?.video_url || "";
+    sendEvt(res, "progress", { step: "transcode", attempt: i + 1 });
+    sendLog(res, "debug", "Transcode poll #" + (i + 1), { has_tc: !!tc });
+    if (tc) { sendLog(res, "success", "Transcode done"); return { source_url: v || fallback, video_transcoded: tc }; }
     await sleep(3000);
   }
   sendLog(res, "warn", "Transcode timeout");
   return { source_url: fallback, video_transcoded: fallback };
 }
-async function delivery(client, gnum, sourceUrl, videoTranscoded, taskName, res) {
-  sendLog(res, "info", `Submitting task: ${taskName}`);
-  const body = baseParams(gnum, {
-    type: TASK_TYPE, content_type: CONTENT_TYPE, source_url: sourceUrl,
+
+async function delivery(c, g, srcUrl, tcUrl, name, res) {
+  sendLog(res, "info", "Submitting AI task: " + name);
+  const b = baseParams(g, {
+    type: TASK_TYPE, content_type: CONTENT_TYPE, source_url: srcUrl,
     type_params: JSON.stringify({is_mirror:0,orientation_tag:1,j_420_trans:"1",return_ext:"2"}),
     right_detail: JSON.stringify({source:"1",touch_type:"4",function_id:"630",material_id:"63011",url:"https://wink.ai/video-enhancer/upload"}),
-    ext_params: JSON.stringify({task_name:taskName,records:TASK_TYPE,video_transcoded:videoTranscoded}),
+    ext_params: JSON.stringify({task_name:name,records:TASK_TYPE,video_transcoded:tcUrl}),
     with_prepare: "1",
   });
-  const r = await client.post("/api/meitu_ai/delivery.json", body.toString(), {headers:{...traceHeaders(),"content-type":"application/x-www-form-urlencoded;charset=UTF-8"}});
-  if (r.status >= 400 || r.data?.code !== 0) { sendLog(res, "error", "delivery FAILED", { response: r.data }); throw new Error(`delivery gagal`); }
-  const data = r.data.data || {};
-  sendLog(res, "success", "Task submitted", { msg_id: data.msg_id });
-  return data;
+  const r = await c.post("/api/meitu_ai/delivery.json", b.toString(), {headers:{...traceHeaders(),"content-type":"application/x-www-form-urlencoded;charset=UTF-8"}});
+  if (r.status >= 400 || r.data?.code !== 0) { sendLog(res, "error", "delivery FAILED", r.data); throw new Error("delivery gagal"); }
+  const d = r.data.data || {};
+  sendLog(res, "success", "Task submitted", { msg_id: d.msg_id });
+  return d;
 }
-async function queryBatch(client, gnum, msgId) {
-  const params = baseParams(gnum, { msg_ids: msgId });
-  const r = await client.get(`/api/meitu_ai/query_batch.json?${params}`, {headers:{...traceHeaders(),referer:`${BASE_URL}/video-enhancer/upload`}});
-  if (r.status >= 400 || r.data?.code !== 0) throw new Error(`query batch gagal`);
-  return r.data.data;
-}
-function extractResultUrl(data) {
-  const item = data?.item_list?.[0]; const media = item?.result?.media_info_list?.[0];
-  return media?.media_data || item?.result?.result_url || item?.result?.url || item?.client_ext_params?.video_transcoded || "";
-}
-function extractNextMsgId(data, currentMsgId) {
-  const item = data?.item_list?.[0]; const rv = item?.result?.result || ""; const rm = item?.result?.msg_id || item?.msg_id || "";
-  if (rv && rv !== currentMsgId && !rv.startsWith("http")) return rv;
-  if (rm && rm !== currentMsgId && !rm.startsWith("wpr_")) return rm;
-  return "";
-}
-async function waitResult(client, gnum, firstMsgId, res) {
-  sendLog(res, "info", `Waiting for AI result (msg_id: ${firstMsgId})...`);
-  let msgId = firstMsgId;
+
+async function pollResult(c, g, firstId, res) {
+  sendLog(res, "info", "Polling AI result (msg_id: " + firstId + ")...");
+  let mid = firstId;
   for (let i = 0; i < 120; i++) {
-    const data = await queryBatch(client, gnum, msgId);
-    const next = extractNextMsgId(data, msgId);
-    if (next) { sendLog(res, "debug", `Redirect msg_id: ${next}`); msgId = next; await sleep(1000); continue; }
-    const url = extractResultUrl(data);
-    const errCode = data?.item_list?.[0]?.result?.error_code;
-    const errMsg = data?.item_list?.[0]?.result?.error_msg;
-    sendEvent(res, "progress", { step: "enhance", attempt: i + 1 });
-    sendLog(res, "debug", `Enhance poll #${i+1}`, { error_code: errCode, has_url: !!url });
-    if (url && url.startsWith("http") && errCode === 0) { sendLog(res, "success", "Enhancement DONE!"); return url; }
-    if (errCode && errCode !== 29901 && errCode !== 0) { sendLog(res, "error", `Task failed: ${errCode} ${errMsg||"-"}`); throw new Error(`task gagal: ${errCode} ${errMsg||""}`); }
+    const p = baseParams(g, { msg_ids: mid });
+    const r = await c.get("/api/meitu_ai/query_batch.json?" + p, {headers:{...traceHeaders(),referer:BASE_URL+"/video-enhancer/upload"}});
+    if (r.status >= 400 || r.data?.code !== 0) { sendLog(res, "warn", "query error, retrying..."); await sleep(5000); continue; }
+    const d = r.data.data;
+    const item = d?.item_list?.[0];
+    const rv = item?.result?.result || "";
+    const rm = item?.result?.msg_id || item?.msg_id || "";
+    if (rv && rv !== mid && !rv.startsWith("http")) { sendLog(res, "debug", "Redirect: " + rv); mid = rv; await sleep(1000); continue; }
+    if (rm && rm !== mid && !rm.startsWith("wpr_")) { sendLog(res, "debug", "Redirect: " + rm); mid = rm; await sleep(1000); continue; }
+    const media = item?.result?.media_info_list?.[0];
+    const url = media?.media_data || item?.result?.result_url || item?.result?.url || item?.client_ext_params?.video_transcoded || "";
+    const ec = item?.result?.error_code;
+    const em = item?.result?.error_msg;
+    sendEvt(res, "progress", { step: "enhance", attempt: i + 1 });
+    sendLog(res, "debug", "Enhance poll #" + (i + 1), { ec, has_url: !!url });
+    if (url && url.startsWith("http") && ec === 0) { sendLog(res, "success", "DONE! Result ready"); return url; }
+    if (ec && ec !== 29901 && ec !== 0) { sendLog(res, "error", "Task failed: " + ec + " " + (em || "")); throw new Error("task gagal: " + ec + " " + (em || "")); }
     await sleep(5000);
   }
-  throw new Error("result timeout");
+  throw new Error("result timeout (10 min)");
 }
 
 export default async function handler(req, res) {
@@ -209,15 +203,15 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
 
   let body = "";
-  for await (const chunk of req) body += chunk;
+  for await (const c of req) body += c;
   let parsed;
   try { parsed = JSON.parse(body); } catch { return res.status(400).json({ error: "Invalid JSON" }); }
 
-  const { uploadId, filename, totalChunks } = parsed;
-  if (!uploadId || !totalChunks) return res.status(400).json({ error: "uploadId and totalChunks required" });
+  const { videoUrl, filename } = parsed;
+  if (!videoUrl) return res.status(400).json({ error: "videoUrl diperlukan" });
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -225,59 +219,56 @@ export default async function handler(req, res) {
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders?.();
 
-  let filePath = null;
+  let tmpPath = null;
   try {
-    const safeName = filename || `video-${Date.now()}.mp4`;
-    const taskName = `Enhancer-Ultra HD-${path.parse(safeName).name}`;
+    const name = filename || "video-" + Date.now() + ".mp4";
+    const taskName = "Enhancer-Ultra HD-" + path.parse(name).name;
 
-    sendLog(res, "info", `=== NEW REQUEST: ${safeName} ===`);
+    sendLog(res, "info", "=== START: " + name + " ===");
+    sendLog(res, "info", "Video URL: " + videoUrl);
 
-    // Step 1: Reassemble chunks
-    sendEvent(res, "progress", { step: "init", message: "Reassembling uploaded chunks..." });
-    filePath = await reassembleFile(uploadId, totalChunks, res);
+    tmpPath = await downloadVideo(videoUrl, res);
 
-    // Step 2: Wink AI process
     const gnum = crypto.randomUUID();
-    sendLog(res, "debug", `Session: ${gnum}`);
     const jar = new CookieJar();
-    await jar.setCookie(`_sm=${gnum}; Path=/; Domain=wink.ai`, BASE_URL);
-    await jar.setCookie(`meitustat=${encodeURIComponent(JSON.stringify({wgid:gnum}))}; Path=/; Domain=wink.ai`, BASE_URL);
-    const client = createApiClient(gnum, jar);
+    await jar.setCookie("_sm=" + gnum + "; Path=/; Domain=wink.ai", BASE_URL);
+    await jar.setCookie("meitustat=" + encodeURIComponent(JSON.stringify({wgid:gnum})) + "; Path=/; Domain=wink.ai", BASE_URL);
+    const client = mkClient(gnum, jar);
 
-    sendEvent(res, "progress", { step: "sign", message: "Getting upload token..." });
+    sendEvt(res, "progress", { step: "sign" });
     const sign = await getMaatSign(client, gnum, res);
 
-    sendEvent(res, "progress", { step: "policy", message: "Getting upload policy..." });
-    const policy = await getUploadPolicy(sign, res);
+    sendEvt(res, "progress", { step: "policy" });
+    const policy = await getPolicy(sign, res);
 
-    sendEvent(res, "progress", { step: "upload", message: "Uploading to Qiniu CDN...", pct: 0 });
-    const uploaded = await uploadToQiniu(policy, filePath, safeName, res);
+    sendEvt(res, "progress", { step: "upload", pct: 0 });
+    const up = await uploadQiniu(policy, tmpPath, name, res);
 
-    sendEvent(res, "progress", { step: "info", message: "Processing metadata..." });
-    await getVideoInfo(client, gnum, uploaded.file_key, res);
+    sendEvt(res, "progress", { step: "info" });
+    await getVideoInfo(client, gnum, up.file_key, res);
 
-    sendEvent(res, "progress", { step: "transcode_start", message: "Starting transcode..." });
-    const transcodeId = await startTranscode(client, gnum, uploaded.file_key, res);
-    const transcode = await waitTranscode(client, gnum, transcodeId, uploaded.source_url, res);
+    sendEvt(res, "progress", { step: "transcode_start" });
+    const tcId = await startTranscode(client, gnum, up.file_key, res);
+    const tc = await pollTranscode(client, gnum, tcId, up.source_url, res);
 
-    sendEvent(res, "progress", { step: "delivery", message: "Submitting to AI..." });
-    const task = await delivery(client, gnum, transcode.source_url, transcode.video_transcoded, taskName, res);
-    const firstMsgId = task.msg_id || task.prepare_msg_id;
-    if (!firstMsgId) throw new Error("no msg_id from delivery");
+    sendEvt(res, "progress", { step: "delivery" });
+    const task = await delivery(client, gnum, tc.source_url, tc.video_transcoded, taskName, res);
+    const msgId = task.msg_id || task.prepare_msg_id;
+    if (!msgId) throw new Error("no msg_id");
 
-    sendEvent(res, "progress", { step: "enhance", message: "AI processing video..." });
-    const resultUrl = await waitResult(client, gnum, firstMsgId, res);
+    sendEvt(res, "progress", { step: "enhance" });
+    const resultUrl = await pollResult(client, gnum, msgId, res);
 
     sendLog(res, "success", "=== COMPLETED ===");
-    sendEvent(res, "result", { success: true, resultUrl, filename: safeName });
+    sendEvt(res, "result", { success: true, resultUrl, filename: name });
     res.end();
   } catch (err) {
-    console.error("Enhance error:", err);
-    sendLog(res, "fatal", `FAILED: ${err.message}`);
-    sendEvent(res, "error", { message: err.message || "Internal error" });
+    console.error("Error:", err);
+    sendLog(res, "fatal", "FAILED: " + err.message);
+    sendEvt(res, "error", { message: err.message });
     res.end();
   } finally {
-    if (filePath) { try { await fsp.unlink(filePath); } catch {} }
+    if (tmpPath) try { await fsp.unlink(tmpPath); } catch {}
   }
 }
 

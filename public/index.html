@@ -1,417 +1,270 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>✨ Wink Video Enhancer</title>
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background: radial-gradient(ellipse at top, #1a1a2e 0%, #0a0a0f 50%);
-  color: #e0e0e0; min-height: 100vh; display: flex;
-  align-items: center; justify-content: center; padding: 20px;
-}
-.container {
-  width: 100%; max-width: 680px;
-  background: rgba(20, 20, 31, 0.8); backdrop-filter: blur(20px);
-  border: 1px solid rgba(124, 92, 252, 0.2); border-radius: 24px;
-  padding: 32px; box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 80px rgba(124, 92, 252, 0.08);
-}
-.logo { text-align: center; margin-bottom: 24px; }
-.logo h1 {
-  font-size: 28px; font-weight: 800;
-  background: linear-gradient(135deg, #7c5cfc 0%, #00d4ff 100%);
-  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
-}
-.logo p { color: #888; font-size: 13px; margin-top: 6px; }
-.drop-zone {
-  border: 2px dashed #3a3a5c; border-radius: 16px; padding: 40px 20px;
-  text-align: center; cursor: pointer; transition: all 0.3s;
-  position: relative; overflow: hidden; background: rgba(255,255,255,0.02);
-}
-.drop-zone:hover, .drop-zone.drag-over { border-color: #7c5cfc; background: rgba(124,92,252,0.08); }
-.drop-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
-.drop-zone .icon { font-size: 44px; margin-bottom: 10px; }
-.drop-zone p { color: #ccc; font-size: 14px; font-weight: 500; }
-.drop-zone .hint { font-size: 12px; color: #666; margin-top: 6px; }
-.file-info {
-  display: none; margin-top: 14px; padding: 12px 16px;
-  background: rgba(124,92,252,0.08); border: 1px solid rgba(124,92,252,0.2);
-  border-radius: 10px; font-size: 13px; color: #bbb; word-break: break-all;
-}
-.file-info.show { display: block; }
-.file-info strong { color: #7c5cfc; }
-.btn {
-  width: 100%; margin-top: 16px; padding: 14px; font-size: 15px; font-weight: 700;
-  border: none; border-radius: 12px; cursor: pointer;
-  background: linear-gradient(135deg, #7c5cfc 0%, #5a3de8 100%);
-  color: #fff; transition: all 0.3s;
-}
-.btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(124,92,252,0.4); }
-.btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.progress-section {
-  display: none; margin-top: 20px; padding: 16px;
-  background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px;
-}
-.progress-section.show { display: block; }
-.progress-bar-track { width: 100%; height: 6px; background: #2a2a3e; border-radius: 3px; overflow: hidden; }
-.progress-bar-fill {
-  height: 100%; width: 0%;
-  background: linear-gradient(90deg, #7c5cfc, #00d4ff);
-  border-radius: 3px; transition: width 0.4s ease;
-}
-.progress-text { text-align: center; margin-top: 10px; font-size: 13px; color: #aaa; min-height: 18px; }
-.progress-step {
-  display: inline-block; margin-top: 6px; padding: 3px 10px;
-  background: rgba(124,92,252,0.15); border-radius: 20px;
-  font-size: 11px; color: #7c5cfc; font-weight: 600;
-}
-.logs-panel {
-  display: none; margin-top: 14px;
-  background: #05050a; border: 1px solid rgba(124,92,252,0.2);
-  border-radius: 10px; padding: 12px; max-height: 300px; overflow-y: auto;
-  font-family: 'Courier New', monospace; font-size: 11px;
-}
-.logs-panel.show { display: block; }
-.log-line { margin-bottom: 3px; line-height: 1.5; word-break: break-word; }
-.log-ts { color: #555; }
-.log-info { color: #60a5fa; }
-.log-success { color: #4ade80; }
-.log-warn { color: #fbbf24; }
-.log-error { color: #f87171; font-weight: 600; }
-.log-fatal { color: #ef4444; font-weight: 700; background: rgba(239,68,68,0.1); padding: 2px 6px; border-radius: 4px; }
-.log-debug { color: #777; }
-.log-detail { color: #555; font-size: 10px; display: block; margin-left: 14px; word-break: break-all; max-height: 60px; overflow: hidden; }
-.logs-toggle {
-  margin-top: 10px; text-align: center; font-size: 12px; color: #7c5cfc;
-  cursor: pointer; user-select: none;
-}
-.upload-status {
-  display: none; margin-top: 14px; padding: 12px 16px;
-  background: rgba(96,165,250,0.08); border: 1px solid rgba(96,165,250,0.2);
-  border-radius: 10px; font-size: 13px; color: #60a5fa; text-align: center;
-}
-.upload-status.show { display: block; }
-.upload-bar { width: 100%; height: 4px; background: #2a2a3e; border-radius: 2px; margin-top: 8px; overflow: hidden; }
-.upload-bar-fill { height: 100%; width: 0%; background: #60a5fa; border-radius: 2px; transition: width 0.3s; }
-.result-section {
-  display: none; margin-top: 20px; text-align: center; padding: 20px;
-  background: rgba(74,222,128,0.05); border: 1px solid rgba(74,222,128,0.2); border-radius: 14px;
-}
-.result-section.show { display: block; }
-.result-section .success-icon { font-size: 48px; margin-bottom: 10px; animation: pop 0.5s ease; }
-@keyframes pop { 0% { transform: scale(0); } 70% { transform: scale(1.2); } 100% { transform: scale(1); } }
-.result-section h3 { color: #4ade80; margin-bottom: 14px; font-size: 18px; }
-.download-link {
-  display: inline-block; padding: 12px 28px;
-  background: linear-gradient(135deg, #4ade80, #22c55e);
-  color: #000; font-weight: 700; text-decoration: none;
-  border-radius: 10px; transition: all 0.3s; font-size: 14px;
-}
-.download-link:hover { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(74,222,128,0.4); }
-video {
-  width: 100%; border-radius: 10px; margin-top: 16px; display: none;
-  background: #000; border: 1px solid rgba(255,255,255,0.1);
-}
-video.show { display: block; }
-.error-msg {
-  display: none; margin-top: 14px; padding: 12px 16px;
-  background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.3);
-  border-radius: 10px; color: #f87171; font-size: 13px; word-break: break-word;
-}
-.error-msg.show { display: block; }
-.footer { text-align: center; margin-top: 20px; font-size: 11px; color: #555; }
-.spinner {
-  display: inline-block; width: 12px; height: 12px;
-  border: 2px solid rgba(124,92,252,0.3); border-top-color: #7c5cfc;
-  border-radius: 50%; animation: spin 1s linear infinite;
-  vertical-align: middle; margin-right: 5px;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:radial-gradient(ellipse at top,#1a1a2e,#0a0a0f 50%);color:#e0e0e0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.container{width:100%;max-width:680px;background:rgba(20,20,31,.8);backdrop-filter:blur(20px);border:1px solid rgba(124,92,252,.2);border-radius:24px;padding:32px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.logo{text-align:center;margin-bottom:24px}
+.logo h1{font-size:28px;font-weight:800;background:linear-gradient(135deg,#7c5cfc,#00d4ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.logo p{color:#888;font-size:13px;margin-top:6px}
+.tutorial{margin-bottom:20px;padding:16px;background:rgba(96,165,250,.06);border:1px solid rgba(96,165,250,.2);border-radius:12px;font-size:13px;color:#93c5fd;line-height:1.7}
+.tutorial b{color:#60a5fa}
+.tutorial a{color:#7c5cfc;text-decoration:underline}
+.tutorial ol{margin-left:18px;margin-top:8px}
+.tutorial li{margin-bottom:4px}
+.url-group{display:flex;gap:8px;margin-bottom:8px}
+.url-input{flex:1;padding:12px 16px;font-size:14px;border:2px solid #3a3a5c;border-radius:12px;background:rgba(255,255,255,.05);color:#e0e0e0;outline:none;transition:border-color .3s}
+.url-input:focus{border-color:#7c5cfc}
+.url-input::placeholder{color:#555}
+.paste-btn{padding:12px 16px;font-size:13px;font-weight:600;border:none;border-radius:12px;cursor:pointer;background:rgba(124,92,252,.2);color:#7c5cfc;transition:all .3s;white-space:nowrap}
+.paste-btn:hover{background:rgba(124,92,252,.3)}
+.btn{width:100%;margin-top:12px;padding:14px;font-size:15px;font-weight:700;border:none;border-radius:12px;cursor:pointer;background:linear-gradient(135deg,#7c5cfc,#5a3de8);color:#fff;transition:all .3s}
+.btn:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 10px 30px rgba(124,92,252,.4)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.progress-section{display:none;margin-top:20px;padding:16px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);border-radius:12px}
+.progress-section.show{display:block}
+.progress-bar-track{width:100%;height:6px;background:#2a2a3e;border-radius:3px;overflow:hidden}
+.progress-bar-fill{height:100%;width:0%;background:linear-gradient(90deg,#7c5cfc,#00d4ff);border-radius:3px;transition:width .4s}
+.progress-text{text-align:center;margin-top:10px;font-size:13px;color:#aaa;min-height:18px}
+.progress-step{display:inline-block;margin-top:6px;padding:3px 10px;background:rgba(124,92,252,.15);border-radius:20px;font-size:11px;color:#7c5cfc;font-weight:600}
+.logs-toggle{margin-top:10px;text-align:center;font-size:12px;color:#7c5cfc;cursor:pointer;user-select:none}
+.logs-panel{display:none;margin-top:14px;background:#05050a;border:1px solid rgba(124,92,252,.2);border-radius:10px;padding:12px;max-height:300px;overflow-y:auto;font-family:'Courier New',monospace;font-size:11px}
+.logs-panel.show{display:block}
+.log-line{margin-bottom:3px;line-height:1.5;word-break:break-word}
+.log-ts{color:#555}.log-info{color:#60a5fa}.log-success{color:#4ade80}.log-warn{color:#fbbf24}.log-error{color:#f87171;font-weight:600}.log-fatal{color:#ef4444;font-weight:700;background:rgba(239,68,68,.1);padding:2px 6px;border-radius:4px}.log-debug{color:#777}
+.log-detail{color:#555;font-size:10px;display:block;margin-left:14px;word-break:break-all;max-height:60px;overflow:hidden}
+.result-section{display:none;margin-top:20px;text-align:center;padding:20px;background:rgba(74,222,128,.05);border:1px solid rgba(74,222,128,.2);border-radius:14px}
+.result-section.show{display:block}
+.result-section .ico{font-size:48px;margin-bottom:10px;animation:pop .5s ease}
+@keyframes pop{0%{transform:scale(0)}70%{transform:scale(1.2)}100%{transform:scale(1)}}
+.result-section h3{color:#4ade80;margin-bottom:14px;font-size:18px}
+.dl-link{display:inline-block;padding:12px 28px;background:linear-gradient(135deg,#4ade80,#22c55e);color:#000;font-weight:700;text-decoration:none;border-radius:10px;transition:all .3s;font-size:14px}
+.dl-link:hover{transform:translateY(-2px);box-shadow:0 10px 30px rgba(74,222,128,.4)}
+video{width:100%;border-radius:10px;margin-top:16px;display:none;background:#000;border:1px solid rgba(255,255,255,.1)}
+video.show{display:block}
+.error-msg{display:none;margin-top:14px;padding:12px 16px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);border-radius:10px;color:#f87171;font-size:13px;word-break:break-word}
+.error-msg.show{display:block}
+.footer{text-align:center;margin-top:20px;font-size:11px;color:#555}
+.spinner{display:inline-block;width:12px;height:12px;border:2px solid rgba(124,92,252,.3);border-top-color:#7c5cfc;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:5px}
+@keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
 <div class="container">
-  <div class="logo">
-    <h1>✨ Wink Enhancer</h1>
-    <p>Ultra HD Video Enhancement powered by AI</p>
-  </div>
-  <div class="drop-zone" id="dropZone">
-    <input type="file" id="fileInput" accept="video/mp4,video/quicktime,video/webm,video/x-matroska" />
-    <div class="icon">🎬</div>
-    <p>Klik atau drag &amp; drop video di sini</p>
-    <div class="hint">MP4, MOV, WebM, MKV • Maks 200MB</div>
-  </div>
-  <div class="file-info" id="fileInfo"></div>
-  <button class="btn" id="enhanceBtn" disabled>⚡ Enhance Video</button>
-  <div class="upload-status" id="uploadStatus">
-    <span class="spinner"></span><span id="uploadStatusText">Uploading video to catbox.moe...</span>
-    <div class="upload-bar"><div class="upload-bar-fill" id="uploadBarFill"></div></div>
-  </div>
-  <div class="progress-section" id="progressSection">
-    <div class="progress-bar-track"><div class="progress-bar-fill" id="progressBar"></div></div>
-    <div class="progress-text" id="progressText"><span class="spinner"></span>Mempersiapkan...</div>
-    <div style="text-align:center;"><span class="progress-step" id="progressStep">init</span></div>
-  </div>
-  <div class="logs-toggle" id="logsToggle" style="display:none;">📋 Toggle Live Logs ▼</div>
-  <div class="logs-panel" id="logsPanel"></div>
-  <div class="error-msg" id="errorMsg"></div>
-  <div class="result-section" id="resultSection">
-    <div class="success-icon">🎉</div>
-    <h3>Video Berhasil Di-enhance!</h3>
-    <a id="downloadLink" class="download-link" href="#" target="_blank">⬇️ Download Video</a>
-    <video id="resultVideo" controls></video>
-  </div>
-  <div class="footer">Powered by Wink AI • Deployed on Vercel</div>
-</div>
-<script>
-var $ = function(id) { return document.getElementById(id); };
-var dropZone = $('dropZone'), fileInput = $('fileInput'), fileInfo = $('fileInfo');
-var enhanceBtn = $('enhanceBtn'), progressSection = $('progressSection');
-var progressBar = $('progressBar'), progressText = $('progressText'), progressStep = $('progressStep');
-var logsToggle = $('logsToggle'), logsPanel = $('logsPanel');
-var uploadStatus = $('uploadStatus'), uploadStatusText = $('uploadStatusText'), uploadBarFill = $('uploadBarFill');
-var errorMsg = $('errorMsg'), resultSection = $('resultSection');
-var downloadLink = $('downloadLink'), resultVideo = $('resultVideo');
-var selectedFile = null;
+<div class="logo"><h1>✨ Wink Enhancer</h1><p>Ultra HD Video Enhancement powered by AI</p></div>
 
-var STEPS = {
-  download: { pct: 10, label: 'Download video ke server' },
-  init: { pct: 15, label: 'Memulai sesi' },
-  sign: { pct: 20, label: 'Mengambil token' },
-  policy: { pct: 25, label: 'Mengambil policy' },
-  upload: { pct: 40, label: 'Upload ke Qiniu CDN' },
-  info: { pct: 50, label: 'Memproses metadata' },
-  transcode_start: { pct: 55, label: 'Memulai transcode' },
-  transcode: { pct: 65, label: 'Transcoding video' },
-  delivery: { pct: 75, label: 'Mengirim ke AI' },
-  enhance: { pct: 85, label: 'AI memproses video' }
+<div class="tutorial">
+<b>📌 Cara Pakai:</b>
+<ol>
+<li>Upload video kamu ke <a href="https://catbox.moe" target="_blank">catbox.moe</a> (gratis, tanpa akun)</li>
+<li>Copy link hasil upload (contoh: <code>https://files.catbox.moe/xxxxx.mp4</code>)</li>
+<li>Paste link di bawah, klik <b>Enhance</b> ✨</li>
+</ol>
+</div>
+
+<div class="url-group">
+<input class="url-input" id="urlInput" type="url" placeholder="Paste link video di sini (catbox / gdrive / dll)..."/>
+<button class="paste-btn" id="pasteBtn" title="Paste dari clipboard">📋 Paste</button>
+</div>
+
+<button class="btn" id="enhanceBtn" disabled>⚡ Enhance Video</button>
+
+<div class="progress-section" id="progressSection">
+<div class="progress-bar-track"><div class="progress-bar-fill" id="progressBar"></div></div>
+<div class="progress-text" id="progressText"><span class="spinner"></span>Mempersiapkan...</div>
+<div style="text-align:center"><span class="progress-step" id="progressStep">init</span></div>
+</div>
+
+<div class="logs-toggle" id="logsToggle" style="display:none">📋 Show Live Logs ▼</div>
+<div class="logs-panel" id="logsPanel"></div>
+
+<div class="error-msg" id="errorMsg"></div>
+
+<div class="result-section" id="resultSection">
+<div class="ico">🎉</div>
+<h3>Video Berhasil Di-enhance!</h3>
+<a id="downloadLink" class="dl-link" href="#" target="_blank">⬇️ Download Video</a>
+<video id="resultVideo" controls></video>
+</div>
+
+<div class="footer">Powered by Wink AI • Deployed on Vercel</div>
+</div>
+
+<script>
+function $(id){return document.getElementById(id)}
+var urlInput=$('urlInput'),pasteBtn=$('pasteBtn'),enhanceBtn=$('enhanceBtn');
+var progressSection=$('progressSection'),progressBar=$('progressBar'),progressText=$('progressText'),progressStep=$('progressStep');
+var logsToggle=$('logsToggle'),logsPanel=$('logsPanel');
+var errorMsg=$('errorMsg'),resultSection=$('resultSection');
+var downloadLink=$('downloadLink'),resultVideo=$('resultVideo');
+
+var STEPS={
+  download:{pct:10,label:'Downloading video dari link...'},
+  init:{pct:15,label:'Memulai sesi'},
+  sign:{pct:20,label:'Mengambil token'},
+  policy:{pct:25,label:'Mengambil policy'},
+  upload:{pct:40,label:'Upload ke Qiniu CDN'},
+  info:{pct:50,label:'Memproses metadata'},
+  transcode_start:{pct:55,label:'Memulai transcode'},
+  transcode:{pct:65,label:'Transcoding video'},
+  delivery:{pct:75,label:'Mengirim ke AI'},
+  enhance:{pct:85,label:'AI memproses video'}
 };
 
-function formatSize(b) {
-  if (b < 1024) return b + ' B';
-  if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
-  if (b < 1024*1024*1024) return (b/1024/1024).toFixed(1) + ' MB';
-  return (b/1024/1024/1024).toFixed(2) + ' GB';
-}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 
-function addLog(level, message, detail) {
-  var line = document.createElement('div');
-  line.className = 'log-line';
-  var ts = new Date().toISOString().slice(11, 23);
-  var html = '<span class="log-ts">' + ts + '</span> <span class="log-' + level + '">[' + level.toUpperCase().padEnd(7) + ']</span> ' + esc(message);
-  if (detail) {
-    html += '<span class="log-detail">' + esc(typeof detail === 'string' ? detail : JSON.stringify(detail)) + '</span>';
-  }
-  line.innerHTML = html;
+function addLog(level,msg,detail){
+  var line=document.createElement('div');
+  line.className='log-line';
+  var ts=new Date().toISOString().slice(11,23);
+  var h='<span class="log-ts">'+ts+'</span> <span class="log-'+level+'">['+level.toUpperCase()+']</span> '+esc(msg);
+  if(detail)h+='<span class="log-detail">'+esc(typeof detail==='string'?detail:JSON.stringify(detail))+'</span>';
+  line.innerHTML=h;
   logsPanel.appendChild(line);
-  logsPanel.scrollTop = logsPanel.scrollHeight;
+  logsPanel.scrollTop=logsPanel.scrollHeight;
 }
 
-function esc(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function checkUrl(){
+  var v=urlInput.value.trim();
+  enhanceBtn.disabled=!(v.length>5);
 }
 
-function showFile(f) {
-  selectedFile = f;
-  fileInfo.innerHTML = '<strong>📎 ' + f.name + '</strong> • ' + formatSize(f.size);
-  fileInfo.classList.add('show');
-  enhanceBtn.disabled = false;
-}
+urlInput.addEventListener('input',checkUrl);
+urlInput.addEventListener('paste',function(){setTimeout(checkUrl,50)});
 
-fileInput.addEventListener('change', function(e) {
-  if (e.target.files[0]) showFile(e.target.files[0]);
-});
-
-['dragenter','dragover'].forEach(function(ev) {
-  dropZone.addEventListener(ev, function(e) {
-    e.preventDefault();
-    dropZone.classList.add('drag-over');
-  });
-});
-
-['dragleave','drop'].forEach(function(ev) {
-  dropZone.addEventListener(ev, function(e) {
-    e.preventDefault();
-    dropZone.classList.remove('drag-over');
-  });
-});
-
-dropZone.addEventListener('drop', function(e) {
-  var f = e.dataTransfer.files[0];
-  if (f && f.type.startsWith('video/')) {
-    showFile(f);
-  } else {
-    errorMsg.textContent = 'File harus berupa video!';
-    errorMsg.classList.add('show');
+pasteBtn.addEventListener('click',async function(){
+  try{
+    var text=await navigator.clipboard.readText();
+    urlInput.value=text.trim();
+    checkUrl();
+    addLog('info','Pasted from clipboard');
+  }catch(e){
+    urlInput.focus();
+    addLog('warn','Clipboard access denied, please paste manually');
   }
 });
 
-logsToggle.addEventListener('click', function() {
+logsToggle.addEventListener('click',function(){
   logsPanel.classList.toggle('show');
-  logsToggle.textContent = logsPanel.classList.contains('show') ? '📋 Hide Live Logs ▲' : '📋 Show Live Logs ▼';
+  logsToggle.textContent=logsPanel.classList.contains('show')?'📋 Hide Live Logs ▲':'📋 Show Live Logs ▼';
 });
 
-function uploadToCatbox(file) {
-  addLog('info', 'Uploading video to catbox.moe (supports large files)...');
-  uploadStatus.classList.add('show');
-  uploadStatusText.textContent = 'Uploading to catbox.moe...';
-
-  var formData = new FormData();
-  formData.append('reqtype', 'fileupload');
-  formData.append('fileToUpload', file);
-
-  var xhr = new XMLHttpRequest();
-
-  return new Promise(function(resolve, reject) {
-    var lastLogPct = -1;
-
-    xhr.upload.addEventListener('progress', function(e) {
-      if (e.lengthComputable) {
-        var pct = Math.round((e.loaded / e.total) * 100);
-        uploadBarFill.style.width = pct + '%';
-        uploadStatusText.textContent = 'Uploading to catbox.moe... ' + pct + '% (' + formatSize(e.loaded) + ' / ' + formatSize(e.total) + ')';
-        if (pct >= lastLogPct + 25) {
-          addLog('debug', 'Catbox upload progress: ' + pct + '%');
-          lastLogPct = pct;
-        }
-      }
-    });
-
-    xhr.addEventListener('load', function() {
-      uploadStatus.classList.remove('show');
-      var responseText = xhr.responseText.trim();
-      addLog('debug', 'Catbox response (HTTP ' + xhr.status + '): ' + responseText.slice(0, 200));
-
-      if (xhr.status >= 200 && xhr.status < 300 && responseText.startsWith('https://')) {
-        addLog('success', 'Uploaded to catbox.moe: ' + responseText);
-        resolve(responseText);
-      } else {
-        addLog('error', 'Catbox upload failed', { status: xhr.status, response: responseText.slice(0, 300) });
-        reject(new Error('Upload ke catbox gagal: ' + (responseText.slice(0, 100) || 'HTTP ' + xhr.status)));
-      }
-    });
-
-    xhr.addEventListener('error', function() {
-      uploadStatus.classList.remove('show');
-      addLog('error', 'Catbox network error');
-      reject(new Error('Upload gagal: network error'));
-    });
-
-    xhr.addEventListener('timeout', function() {
-      uploadStatus.classList.remove('show');
-      addLog('error', 'Catbox upload timeout');
-      reject(new Error('Upload gagal: timeout'));
-    });
-
-    xhr.timeout = 300000;
-    xhr.open('POST', 'https://catbox.moe/user/api.php');
-    xhr.send(formData);
-  });
-}
-
-function resetUI() {
+function resetUI(){
   errorMsg.classList.remove('show');
   resultSection.classList.remove('show');
   resultVideo.classList.remove('show');
-  uploadStatus.classList.remove('show');
   progressSection.classList.add('show');
-  logsToggle.style.display = 'block';
+  logsToggle.style.display='block';
   logsPanel.classList.add('show');
-  logsPanel.innerHTML = '';
-  progressBar.style.width = '0%';
-  progressText.innerHTML = '<span class="spinner"></span>Mempersiapkan...';
-  progressStep.textContent = 'init';
+  logsPanel.innerHTML='';
+  progressBar.style.width='0%';
+  progressText.innerHTML='<span class="spinner"></span>Mempersiapkan...';
+  progressStep.textContent='init';
 }
 
-function updateProgress(data) {
-  var step = STEPS[data.step];
-  if (step) {
-    var pct = step.pct;
-    if (data.step === 'upload' && typeof data.pct === 'number') pct = 25 + Math.round(data.pct * 0.15);
-    if (data.step === 'download' && typeof data.pct === 'number') pct = Math.round(data.pct * 0.1);
-    progressBar.style.width = Math.min(pct, 95) + '%';
-    progressText.innerHTML = '<span class="spinner"></span>' + step.label;
-    progressStep.textContent = data.step;
+function updateProgress(d){
+  var s=STEPS[d.step];
+  if(s){
+    var p=s.pct;
+    if(d.step==='upload'&&typeof d.pct==='number')p=25+Math.round(d.pct*0.15);
+    if(d.step==='download'&&typeof d.pct==='number')p=Math.round(d.pct*0.1);
+    progressBar.style.width=Math.min(p,95)+'%';
+    progressText.innerHTML='<span class="spinner"></span>'+s.label;
+    progressStep.textContent=d.step;
   }
 }
 
-enhanceBtn.addEventListener('click', async function() {
-  if (!selectedFile) return;
+function extractFilename(url){
+  try{
+    var u=new URL(url);
+    var parts=u.pathname.split('/');
+    var last=parts[parts.length-1];
+    if(last&&last.includes('.'))return decodeURIComponent(last);
+  }catch{}
+  return 'video-'+Date.now()+'.mp4';
+}
+
+enhanceBtn.addEventListener('click',async function(){
+  var url=urlInput.value.trim();
+  if(!url)return;
+
+  if(!url.startsWith('http://')&&!url.startsWith('https://')){
+    errorMsg.textContent='❌ Link harus dimulai dengan http:// atau https://';
+    errorMsg.classList.add('show');
+    return;
+  }
+
   resetUI();
-  enhanceBtn.disabled = true;
-  enhanceBtn.textContent = '⏳ Processing...';
-  addLog('info', 'Starting enhancement for: ' + selectedFile.name + ' (' + formatSize(selectedFile.size) + ')');
+  enhanceBtn.disabled=true;
+  enhanceBtn.textContent='⏳ Processing...';
+  var filename=extractFilename(url);
+  addLog('info','Starting enhancement for: '+filename);
+  addLog('info','URL: '+url);
 
-  try {
-    addLog('info', 'Step 1/2: Uploading video to catbox.moe...');
-    var tempUrl = await uploadToCatbox(selectedFile);
-
-    addLog('info', 'Step 2/2: Sending URL to enhancement API...');
-    progressSection.classList.add('show');
-
-    var resp = await fetch('/api/enhance', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videoUrl: tempUrl, filename: selectedFile.name })
+  try{
+    var resp=await fetch('/api/enhance',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({videoUrl:url,filename:filename})
     });
 
-    if (!resp.ok && !resp.body) {
-      var errObj = {};
-      try { errObj = await resp.json(); } catch(e) {}
-      throw new Error(errObj.error || 'HTTP ' + resp.status);
+    if(!resp.ok&&!resp.body){
+      var errObj={};try{errObj=await resp.json()}catch(e){}
+      throw new Error(errObj.error||'HTTP '+resp.status);
     }
 
-    var reader = resp.body.getReader();
-    var decoder = new TextDecoder();
-    var buffer = '';
+    var reader=resp.body.getReader();
+    var decoder=new TextDecoder();
+    var buffer='';
 
-    while (true) {
-      var result = await reader.read();
-      if (result.done) break;
-      buffer += decoder.decode(result.value, { stream: true });
-      var parts = buffer.split('\n\n');
-      buffer = parts.pop();
-      for (var i = 0; i < parts.length; i++) {
-        var part = parts[i];
-        if (!part.trim()) continue;
-        var eventMatch = part.match(/event:\s*(\w+)/);
-        var dataMatch = part.match(/data:\s*(.*)/);
-        if (!eventMatch || !dataMatch) continue;
-        var evt = eventMatch[1];
-        var payload;
-        try { payload = JSON.parse(dataMatch[1]); } catch(e) { continue; }
+    while(true){
+      var r=await reader.read();
+      if(r.done)break;
+      buffer+=decoder.decode(r.value,{stream:true});
+      var parts=buffer.split('\n\n');
+      buffer=parts.pop();
+      for(var i=0;i<parts.length;i++){
+        var part=parts[i];
+        if(!part.trim())continue;
+        var em=part.match(/event:\s*(\w+)/);
+        var dm=part.match(/data:\s*(.*)/);
+        if(!em||!dm)continue;
+        var evt=em[1],payload;
+        try{payload=JSON.parse(dm[1])}catch(e){continue}
 
-        if (evt === 'progress') {
-          updateProgress(payload);
-        } else if (evt === 'log') {
-          addLog(payload.level, payload.message, payload.detail);
-        } else if (evt === 'result') {
-          progressBar.style.width = '100%';
+        if(evt==='progress')updateProgress(payload);
+        else if(evt==='log')addLog(payload.level,payload.message,payload.detail);
+        else if(evt==='result'){
+          progressBar.style.width='100%';
           progressSection.classList.remove('show');
           resultSection.classList.add('show');
-          downloadLink.href = payload.resultUrl;
-          resultVideo.src = payload.resultUrl;
+          downloadLink.href=payload.resultUrl;
+          resultVideo.src=payload.resultUrl;
           resultVideo.classList.add('show');
-          addLog('success', 'DONE! Result URL ready');
-        } else if (evt === 'error') {
-          addLog('fatal', 'REQUEST ERROR: ' + payload.message);
+          addLog('success','DONE! Result URL ready');
+        }else if(evt==='error'){
+          addLog('fatal','ERROR: '+payload.message);
           throw new Error(payload.message);
         }
       }
     }
-  } catch (err) {
+  }catch(err){
     progressSection.classList.remove('show');
-    uploadStatus.classList.remove('show');
-    errorMsg.textContent = '❌ ' + err.message;
+    errorMsg.textContent='❌ '+err.message;
     errorMsg.classList.add('show');
-    addLog('fatal', err.message);
-  } finally {
-    enhanceBtn.disabled = false;
-    enhanceBtn.textContent = '⚡ Enhance Video';
+    addLog('fatal',err.message);
+  }finally{
+    enhanceBtn.disabled=false;
+    enhanceBtn.textContent='⚡ Enhance Video';
+    checkUrl();
   }
 });
+
+checkUrl();
 </script>
 </body>
 </html>
