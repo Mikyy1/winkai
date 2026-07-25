@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>✨ Wink Video Enhancer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: radial-gradient(ellipse at top, #1a1a2e 0%, #0a0a0f 50%);
+      color: #e0e0e0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 580px;
+      background: rgba(20, 20, 31, 0.8);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(124, 92, 252, 0.2);
+      border-radius: 24px;
+      padding: 40px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 80px rgba(124, 92, 252, 0.08);
+    }
+
+    .logo { text-align: center; margin-bottom: 32px; }
+
+    .logo h1 {
+      font-size: 32px;
+      font-weight: 800;
+      background: linear-gradient(135deg, #7c5cfc 0%, #00d4ff 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      letter-spacing: -0.5px;
+    }
+
+    .logo p { color: #888; font-size: 14px; margin-top: 8px; }
+
+    .drop-zone {
+      border: 2px dashed #3a3a5c;
+      border-radius: 16px;
+      padding: 50px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.3s;
+      position: relative;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .drop-zone:hover,
+    .drop-zone.drag-over {
+      border-color: #7c5cfc;
+      background: rgba(124, 92, 252, 0.08);
+      transform: translateY(-2px);
+    }
+
+    .drop-zone input {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer;
+    }
+
+    .drop-zone .icon { font-size: 52px; margin-bottom: 14px; }
+
+    .drop-zone p { color: #ccc; font-size: 15px; font-weight: 500; }
+
+    .drop-zone .hint { font-size: 12px; color: #666; margin-top: 8px; }
+
+    .file-info {
+      display: none;
+      margin-top: 16px;
+      padding: 14px 18px;
+      background: rgba(124, 92, 252, 0.08);
+      border: 1px solid rgba(124, 92, 252, 0.2);
+      border-radius: 12px;
+      font-size: 13px;
+      color: #bbb;
+      word-break: break-all;
+    }
+
+    .file-info.show { display: block; }
+
+    .file-info strong { color: #7c5cfc; }
+
+    .btn {
+      width: 100%;
+      margin-top: 20px;
+      padding: 16px;
+      font-size: 16px;
+      font-weight: 700;
+      border: none;
+      border-radius: 14px;
+      cursor: pointer;
+      background: linear-gradient(135deg, #7c5cfc 0%, #5a3de8 100%);
+      color: #fff;
+      transition: all 0.3s;
+      letter-spacing: 0.3px;
+    }
+
+    .btn:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 30px rgba(124, 92, 252, 0.4);
+    }
+
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .progress-section {
+      display: none;
+      margin-top: 28px;
+      padding: 20px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 14px;
+    }
+
+    .progress-section.show { display: block; }
+
+    .progress-bar-track {
+      width: 100%;
+      height: 8px;
+      background: #2a2a3e;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #7c5cfc, #00d4ff);
+      border-radius: 4px;
+      transition: width 0.4s ease;
+      box-shadow: 0 0 10px rgba(124, 92, 252, 0.5);
+    }
+
+    .progress-text {
+      text-align: center;
+      margin-top: 14px;
+      font-size: 14px;
+      color: #aaa;
+      min-height: 20px;
+    }
+
+    .progress-step {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 4px 12px;
+      background: rgba(124, 92, 252, 0.15);
+      border-radius: 20px;
+      font-size: 12px;
+      color: #7c5cfc;
+      font-weight: 600;
+    }
+
+    .result-section {
+      display: none;
+      margin-top: 28px;
+      text-align: center;
+      padding: 24px;
+      background: rgba(74, 222, 128, 0.05);
+      border: 1px solid rgba(74, 222, 128, 0.2);
+      border-radius: 16px;
+    }
+
+    .result-section.show { display: block; }
+
+    .result-section .success-icon {
+      font-size: 56px;
+      margin-bottom: 12px;
+      animation: pop 0.5s ease;
+    }
+
+    @keyframes pop {
+      0% { transform: scale(0); }
+      70% { transform: scale(1.2); }
+      100% { transform: scale(1); }
+    }
+
+    .result-section h3 {
+      color: #4ade80;
+      margin-bottom: 18px;
+      font-size: 20px;
+    }
+
+    .download-link {
+      display: inline-block;
+      padding: 14px 32px;
+      background: linear-gradient(135deg, #4ade80, #22c55e);
+      color: #000;
+      font-weight: 700;
+      text-decoration: none;
+      border-radius: 12px;
+      transition: all 0.3s;
+      font-size: 15px;
+    }
+
+    .download-link:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 30px rgba(74, 222, 128, 0.4);
+    }
+
+    video {
+      width: 100%;
+      border-radius: 12px;
+      margin-top: 20px;
+      display: none;
+      background: #000;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    video.show { display: block; }
+
+    .error-msg {
+      display: none;
+      margin-top: 16px;
+      padding: 14px 18px;
+      background: rgba(239, 68, 68, 0.08);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      border-radius: 12px;
+      color: #f87171;
+      font-size: 13px;
+      word-break: break-word;
+    }
+
+    .error-msg.show { display: block; }
+
+    .footer {
+      text-align: center;
+      margin-top: 28px;
+      font-size: 12px;
+      color: #555;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(124, 92, 252, 0.3);
+      border-top-color: #7c5cfc;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">
+      <h1>✨ Wink Enhancer</h1>
+      <p>Ultra HD Video Enhancement powered by AI</p>
+    </div>
+
+    <div class="drop-zone" id="dropZone">
+      <input type="file" id="fileInput" accept="video/mp4,video/quicktime,video/webm,video/x-matroska" />
+      <div class="icon">🎬</div>
+      <p>Klik atau drag & drop video di sini</p>
+      <div class="hint">MP4, MOV, WebM, MKV • Maks 200MB</div>
+    </div>
+
+    <div class="file-info" id="fileInfo"></div>
+
+    <button class="btn" id="enhanceBtn" disabled>⚡ Enhance Video</button>
+
+    <div class="progress-section" id="progressSection">
+      <div class="progress-bar-track">
+        <div class="progress-bar-fill" id="progressBar"></div>
+      </div>
+      <div class="progress-text" id="progressText">
+        <span class="spinner"></span>Mempersiapkan...
+      </div>
+      <div style="text-align:center;">
+        <span class="progress-step" id="progressStep">init</span>
+      </div>
+    </div>
+
+    <div class="error-msg" id="errorMsg"></div>
+
+    <div class="result-section" id="resultSection">
+      <div class="success-icon">🎉</div>
+      <h3>Video Berhasil Di-enhance!</h3>
+      <a id="downloadLink" class="download-link" href="#" target="_blank">⬇️ Download Video</a>
+      <video id="resultVideo" controls></video>
+    </div>
+
+    <div class="footer">Powered by Wink AI • Deployed on Vercel</div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const dropZone = $('dropZone');
+    const fileInput = $('fileInput');
+    const fileInfo = $('fileInfo');
+    const enhanceBtn = $('enhanceBtn');
+    const progressSection = $('progressSection');
+    const progressBar = $('progressBar');
+    const progressText = $('progressText');
+    const progressStep = $('progressStep');
+    const errorMsg = $('errorMsg');
+    const resultSection = $('resultSection');
+    const downloadLink = $('downloadLink');
+    const resultVideo = $('resultVideo');
+
+    let selectedFile = null;
+
+    const STEPS = {
+      init: { pct: 5, label: 'Memulai sesi' },
+      sign: { pct: 8, label: 'Mengambil token' },
+      policy: { pct: 12, label: 'Mengambil policy' },
+      upload: { pct: 30, label: 'Mengupload video' },
+      info: { pct: 45, label: 'Memproses metadata' },
+      transcode_start: { pct: 50, label: 'Memulai transcode' },
+      transcode: { pct: 65, label: 'Transcoding video' },
+      delivery: { pct: 75, label: 'Mengirim ke AI' },
+      enhance: { pct: 90, label: 'AI memproses video' },
+    };
+
+    function formatSize(bytes) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+      return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+    }
+
+    function showFile(f) {
+      selectedFile = f;
+      fileInfo.innerHTML = `<strong>📎 ${f.name}</strong> &nbsp;•&nbsp; ${formatSize(f.size)}`;
+      fileInfo.classList.add('show');
+      enhanceBtn.disabled = false;
+    }
+
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files[0]) showFile(e.target.files[0]);
+    });
+
+    ['dragenter', 'dragover'].forEach((ev) => {
+      dropZone.addEventListener(ev, (e) => {
+        e.preventDefault();
+        dropZone.classList.add('drag-over');
+      });
+    });
+
+    ['dragleave', 'drop'].forEach((ev) => {
+      dropZone.addEventListener(ev, (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('drag-over');
+      });
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+      const f = e.dataTransfer.files[0];
+      if (f && f.type.startsWith('video/')) showFile(f);
+      else {
+        errorMsg.textContent = 'File harus berupa video!';
+        errorMsg.classList.add('show');
+      }
+    });
+
+    function resetUI() {
+      errorMsg.classList.remove('show');
+      resultSection.classList.remove('show');
+      resultVideo.classList.remove('show');
+      progressSection.classList.add('show');
+      progressBar.style.width = '0%';
+      progressText.innerHTML = '<span class="spinner"></span>Mempersiapkan...';
+      progressStep.textContent = 'init';
+    }
+
+    function updateProgress(data) {
+      const step = STEPS[data.step];
+      if (step) {
+        let pct = step.pct;
+        if (data.step === 'upload' && typeof data.pct === 'number') {
+          pct = 12 + Math.round(data.pct * 0.33);
+        }
+        progressBar.style.width = pct + '%';
+        progressText.innerHTML = `<span class="spinner"></span>${step.label}${data.message ? ' • ' + data.message : ''}`;
+        progressStep.textContent = data.step;
+      }
+    }
+
+    enhanceBtn.addEventListener('click', async () => {
+      if (!selectedFile) return;
+
+      resetUI();
+      enhanceBtn.disabled = true;
+      enhanceBtn.textContent = '⏳ Processing...';
+
+      try {
+        const form = new FormData();
+        form.append('video', selectedFile);
+
+        const resp = await fetch('/api/enhance', {
+          method: 'POST',
+          body: form,
+        });
+
+        if (!resp.ok && !resp.body) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${resp.status}`);
+        }
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const parts = buffer.split('\n\n');
+          buffer = parts.pop();
+
+          for (const part of parts) {
+            if (!part.trim()) continue;
+            const eventMatch = part.match(/event:\s*(\w+)/);
+            const dataMatch = part.match(/data:\s*(.*)/);
+            if (!eventMatch || !dataMatch) continue;
+
+            const evt = eventMatch[1];
+            let payload;
+            try { payload = JSON.parse(dataMatch[1]); } catch { continue; }
+
+            if (evt === 'progress') updateProgress(payload);
+            else if (evt === 'result') {
+              progressSection.classList.remove('show');
+              resultSection.classList.add('show');
+              downloadLink.href = payload.resultUrl;
+              resultVideo.src = payload.resultUrl;
+              resultVideo.classList.add('show');
+            } else if (evt === 'error') {
+              throw new Error(payload.message);
+            }
+          }
+        }
+      } catch (err) {
+        progressSection.classList.remove('show');
+        errorMsg.textContent = '❌ ' + err.message;
+        errorMsg.classList.add('show');
+      } finally {
+        enhanceBtn.disabled = false;
+        enhanceBtn.textContent = '⚡ Enhance Video';
+      }
+    });
+  </script>
+</body>
+</html>

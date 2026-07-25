@@ -1,0 +1,13 @@
+{
+  "name": "wink-enhancer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "axios": "^1.7.9",
+    "axios-cookiejar-support": "^5.0.3",
+    "tough-cookie": "^5.1.0",
+    "form-data": "^4.0.1",
+    "multer": "^1.4.5-lts.1"
+  }
+}
