@@ -30,7 +30,7 @@ function traceHeaders() {
 function extToMime(f) { const e = path.extname(f).toLowerCase(); return {".mp4":"video/mp4",".mov":"video/quicktime",".webm":"video/webm",".mkv":"video/x-matroska"}[e]||"application/octet-stream"; }
 function baseParams(g, x={}) { return new URLSearchParams({client_id:CLIENT_ID,version:VERSION,country_code:COUNTRY_CODE,gnum:g,client_language:CLIENT_LANGUAGE,client_channel_id:"",client_timezone:CLIENT_TIMEZONE,...x}); }
 
-function mkClient(g, jar) {
+function mkClient(jar) {
   return wrapper(axios.create({baseURL:BASE_URL,jar,withCredentials:true,validateStatus:()=>true,headers:{accept:"*/*",origin:BASE_URL,referer:BASE_URL+"/video-enhancer/upload","user-agent":UA,"sec-ch-ua":'"Chromium";v="147"',"sec-ch-ua-mobile":"?1","sec-ch-ua-platform":'"Android"',ab_info:JSON.stringify({ab_codes:[],version:"1.4.4"})}}));
 }
 
@@ -41,87 +41,72 @@ function sendLog(r,lv,msg,det=null){
   console.log("["+ts+"] ["+lv+"] "+msg,det?safeStr(det).slice(0,500):"");
 }
 
-// ============ GUEST USER REGISTRATION ============
-async function registerGuest(res) {
-  sendLog(res, "info", "Registering guest user...");
+// Parse cookie string ke CookieJar
+function parseCookies(cookieStr, res) {
+  const jar = new CookieJar();
+  if (!cookieStr || cookieStr.trim() === "") {
+    sendLog(res, "warn", "No cookie provided");
+    return { jar, gnum: crypto.randomUUID(), userId: null };
+  }
 
-  // Generate device fingerprint
-  const deviceId = crypto.randomUUID().replace(/-/g, "");
   const gnum = crypto.randomUUID();
+  let userId = null;
 
-  // Try multiple registration endpoints
-  const endpoints = [
-    {
-      url: "/api/user/device_register.json",
-      method: "POST",
-      body: new URLSearchParams({
-        client_id: CLIENT_ID, version: VERSION, country_code: COUNTRY_CODE,
-        gnum, client_language: CLIENT_LANGUAGE, client_timezone: CLIENT_TIMEZONE,
-        device_id: deviceId, platform: "web", device_type: "mobile",
-        os: "Android", os_version: "10", browser: "Chrome",
-      }).toString(),
-      contentType: "application/x-www-form-urlencoded;charset=UTF-8",
-    },
-    {
-      url: "/api/user/guest_register.json",
-      method: "POST",
-      body: new URLSearchParams({
-        client_id: CLIENT_ID, version: VERSION, country_code: COUNTRY_CODE,
-        gnum, client_language: CLIENT_LANGUAGE, client_timezone: CLIENT_TIMEZONE,
-        device_id: deviceId,
-      }).toString(),
-      contentType: "application/x-www-form-urlencoded;charset=UTF-8",
-    },
-    {
-      url: "/api/user/third_party_login.json",
-      method: "POST",
-      body: new URLSearchParams({
-        client_id: CLIENT_ID, version: VERSION, country_code: COUNTRY_CODE,
-        gnum, client_language: CLIENT_LANGUAGE, client_timezone: CLIENT_TIMEZONE,
-        type: "guest", device_id: deviceId,
-      }).toString(),
-      contentType: "application/x-www-form-urlencoded;charset=UTF-8",
-    },
-  ];
+  const cookies = cookieStr.split(";").map(c => c.trim()).filter(c => c);
+  sendLog(res, "info", "Parsing " + cookies.length + " cookies...");
 
-  for (const ep of endpoints) {
+  for (const cookie of cookies) {
     try {
-      sendLog(res, "debug", "Trying register endpoint: " + ep.url);
-      const r = await axios.post(BASE_URL + ep.url, ep.body, {
-        headers: {
-          "content-type": ep.contentType,
-          origin: BASE_URL,
-          referer: BASE_URL + "/",
-          "user-agent": UA,
-          accept: "*/*",
-        },
-        validateStatus: () => true,
-      });
-
-      sendLog(res, "debug", "Register response (" + r.status + "):", r.data);
-
-      if (r.status === 200 && r.data?.code === 0) {
-        sendLog(res, "success", "Guest registration OK via " + ep.url, r.data.data);
-        return { gnum, deviceId, userData: r.data.data };
+      const fullCookie = cookie + "; Path=/; Domain=wink.ai";
+      jar.setCookieSync(fullCookie, BASE_URL);
+      
+      // Extract user_id dari cookie
+      if (cookie.startsWith("uid=") || cookie.startsWith("user_id=")) {
+        userId = cookie.split("=")[1];
+        sendLog(res, "success", "Found user_id in cookie: " + userId);
+      }
+      if (cookie.startsWith("_sm=")) {
+        sendLog(res, "debug", "Found _sm cookie");
       }
     } catch (err) {
-      sendLog(res, "debug", "Register endpoint " + ep.url + " failed: " + err.message);
+      sendLog(res, "debug", "Failed to parse cookie: " + cookie.slice(0, 30) + "...");
     }
   }
 
-  // Fallback: just use gnum as identifier
-  sendLog(res, "warn", "No register endpoint worked, using gnum as fallback");
-  return { gnum, deviceId, userData: null };
+  // Pastikan ada _sm cookie
+  try {
+    jar.setCookieSync("_sm=" + gnum + "; Path=/; Domain=wink.ai", BASE_URL);
+  } catch {}
+
+  sendLog(res, "success", "Cookies loaded into jar");
+  return { jar, gnum, userId };
 }
 
-// ============ DOWNLOAD VIDEO ============
+// Verify cookie dengan request ke user info
+async function verifyCookie(client, res) {
+  sendLog(res, "info", "Verifying cookie with user info request...");
+  try {
+    const r = await client.get("/api/user/get_user_info.json?" + baseParams("verify"), { headers: traceHeaders() });
+    if (r.status === 200 && r.data?.code === 0) {
+      sendLog(res, "success", "Cookie verified! User info:", r.data.data);
+      return { valid: true, userData: r.data.data };
+    } else {
+      sendLog(res, "warn", "Cookie verification failed", { status: r.status, data: r.data });
+      return { valid: false, userData: null };
+    }
+  } catch (err) {
+    sendLog(res, "warn", "Cookie verification error: " + err.message);
+    return { valid: false, userData: null };
+  }
+}
+
 async function downloadVideo(url, res) {
   sendLog(res, "info", "Downloading video from: " + url.slice(0, 100));
   sendEvt(res, "progress", { step: "download", message: "Downloading your video...", pct: 0 });
   const tmpPath = path.join(os.tmpdir(), "wink-" + crypto.randomUUID() + ".mp4");
   const r = await axios.get(url, { responseType: "stream", timeout: 120000, headers: { "user-agent": UA, accept: "*/*" }, maxRedirects: 5 });
   const total = parseInt(r.headers["content-length"] || "0");
-  sendLog(res, "info", "File size: " + (total / 1024 / 1024).toFixed(2) + " MB, type: " + (r.headers["content-type"] || "unknown"));
+  sendLog(res, "info", "File size: " + (total / 1024 / 1024).toFixed(2) + " MB");
   let downloaded = 0, lastPct = -1;
   const writer = fs.createWriteStream(tmpPath);
   r.data.on("data", (chunk) => { downloaded += chunk.length; if (total) { const pct = Math.round((downloaded / total) * 100); if (pct !== lastPct && pct % 10 === 0) { sendEvt(res, "progress", { step: "download", pct }); lastPct = pct; } } });
@@ -132,7 +117,6 @@ async function downloadVideo(url, res) {
   return tmpPath;
 }
 
-// ============ WINK API FUNCTIONS ============
 async function getMaatSign(c, g, res) {
   sendLog(res, "info", "Getting upload sign...");
   const p = baseParams(g, { suffix: ".mp4", type: "temp", count: "1" });
@@ -212,21 +196,14 @@ async function pollTranscode(c, g, id, fallback, res) {
   return { source_url: fallback, video_transcoded: fallback };
 }
 
-async function delivery(c, g, srcUrl, tcUrl, name, guestData, res) {
+async function delivery(c, g, srcUrl, tcUrl, name, userId, res) {
   sendLog(res, "info", "Submitting AI task: " + name);
   sendLog(res, "debug", "source_url=" + (srcUrl || "").slice(0, 80) + " video_transcoded=" + (tcUrl || "").slice(0, 80));
 
-  // Build params with user info from guest registration
   const extraParams = {};
-  if (guestData?.userData?.user_id || guestData?.userData?.uid) {
-    extraParams.user_id = guestData.userData.user_id || guestData.userData.uid;
-    sendLog(res, "debug", "Using user_id from registration: " + extraParams.user_id);
-  }
-  if (guestData?.userData?.token) {
-    extraParams.token = guestData.userData.token;
-  }
-  if (guestData?.deviceId) {
-    extraParams.device_id = guestData.deviceId;
+  if (userId) {
+    extraParams.user_id = userId;
+    sendLog(res, "info", "Using user_id: " + userId);
   }
 
   const b = baseParams(g, {
@@ -237,8 +214,6 @@ async function delivery(c, g, srcUrl, tcUrl, name, guestData, res) {
     with_prepare: "1",
     ...extraParams,
   });
-
-  sendLog(res, "debug", "Delivery params include: " + Object.keys(extraParams).join(", ") || "none");
 
   const r = await c.post("/api/meitu_ai/delivery.json", b.toString(), {headers:{...traceHeaders(),"content-type":"application/x-www-form-urlencoded;charset=UTF-8"}});
   sendLog(res, "debug", "Delivery response:", r.data);
@@ -280,7 +255,6 @@ async function pollResult(c, g, firstId, res) {
   throw new Error("result timeout");
 }
 
-// ============ MAIN HANDLER ============
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -293,7 +267,7 @@ export default async function handler(req, res) {
   let parsed;
   try { parsed = JSON.parse(body); } catch { return res.status(400).json({ error: "Invalid JSON" }); }
 
-  const { videoUrl, filename } = parsed;
+  const { videoUrl, filename, cookie } = parsed;
   if (!videoUrl) return res.status(400).json({ error: "videoUrl diperlukan" });
 
   res.setHeader("Content-Type", "text/event-stream");
@@ -308,32 +282,25 @@ export default async function handler(req, res) {
     const taskName = "Enhancer-Ultra HD-" + path.parse(name).name;
     sendLog(res, "info", "=== START: " + name + " ===");
 
-    // Step 1: Register guest user
-    sendEvt(res, "progress", { step: "init", message: "Registering guest user..." });
-    const guest = await registerGuest(res);
-    sendLog(res, "info", "Guest session: gnum=" + guest.gnum + " device=" + guest.deviceId);
+    // Parse cookie
+    sendEvt(res, "progress", { step: "init", message: "Loading authentication..." });
+    const { jar, gnum, userId } = parseCookies(cookie, res);
+    
+    // Verify cookie
+    const client = mkClient(jar);
+    const verification = await verifyCookie(client, res);
+    
+    if (!verification.valid) {
+      sendLog(res, "warn", "Cookie invalid or expired, proceeding anyway...");
+    }
 
-    // Step 2: Download video
+    // Download video
     sendEvt(res, "progress", { step: "download", message: "Downloading video..." });
     tmpPath = await downloadVideo(videoUrl, res);
 
-    // Step 3: Setup client with guest session
-    const jar = new CookieJar();
-    await jar.setCookie("_sm=" + guest.gnum + "; Path=/; Domain=wink.ai", BASE_URL);
-    await jar.setCookie("meitustat=" + encodeURIComponent(JSON.stringify({wgid:guest.gnum})) + "; Path=/; Domain=wink.ai", BASE_URL);
-    if (guest.userData?.token) {
-      await jar.setCookie("token=" + guest.userData.token + "; Path=/; Domain=wink.ai", BASE_URL);
-    }
-    if (guest.userData?.user_id || guest.userData?.uid) {
-      const uid = guest.userData.user_id || guest.userData.uid;
-      await jar.setCookie("uid=" + uid + "; Path=/; Domain=wink.ai", BASE_URL);
-      sendLog(res, "debug", "Set cookie uid=" + uid);
-    }
-    const client = mkClient(guest.gnum, jar);
-
-    // Step 4: Wink AI pipeline
+    // Wink AI pipeline
     sendEvt(res, "progress", { step: "sign" });
-    const sign = await getMaatSign(client, guest.gnum, res);
+    const sign = await getMaatSign(client, gnum, res);
 
     sendEvt(res, "progress", { step: "policy" });
     const policy = await getPolicy(sign, res);
@@ -342,19 +309,20 @@ export default async function handler(req, res) {
     const up = await uploadQiniu(policy, tmpPath, name, res);
 
     sendEvt(res, "progress", { step: "info" });
-    await getVideoInfo(client, guest.gnum, up.file_key, res);
+    await getVideoInfo(client, gnum, up.file_key, res);
 
     sendEvt(res, "progress", { step: "transcode_start" });
-    const tcId = await startTranscode(client, guest.gnum, up.file_key, res);
-    const tc = await pollTranscode(client, guest.gnum, tcId, up.source_url, res);
+    const tcId = await startTranscode(client, gnum, up.file_key, res);
+    const tc = await pollTranscode(client, gnum, tcId, up.source_url, res);
 
     sendEvt(res, "progress", { step: "delivery" });
-    const task = await delivery(client, guest.gnum, tc.source_url, tc.video_transcoded, taskName, guest, res);
+    const finalUserId = userId || verification.userData?.user_id || verification.userData?.uid;
+    const task = await delivery(client, gnum, tc.source_url, tc.video_transcoded, taskName, finalUserId, res);
     const msgId = task.msg_id || task.prepare_msg_id;
     if (!msgId) throw new Error("no msg_id");
 
     sendEvt(res, "progress", { step: "enhance" });
-    const resultUrl = await pollResult(client, guest.gnum, msgId, res);
+    const resultUrl = await pollResult(client, gnum, msgId, res);
 
     sendLog(res, "success", "=== COMPLETED ===");
     sendEvt(res, "result", { success: true, resultUrl, filename: name });
