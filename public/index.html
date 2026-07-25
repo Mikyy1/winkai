@@ -140,7 +140,7 @@ video.show { display: block; }
   <div class="drop-zone" id="dropZone">
     <input type="file" id="fileInput" accept="video/mp4,video/quicktime,video/webm,video/x-matroska" />
     <div class="icon">🎬</div>
-    <p>Klik atau drag & drop video di sini</p>
+    <p>Klik atau drag &amp; drop video di sini</p>
     <div class="hint">MP4, MOV, WebM, MKV • Maks 200MB</div>
   </div>
   <div class="file-info" id="fileInfo"></div>
@@ -166,17 +166,17 @@ video.show { display: block; }
   <div class="footer">Powered by Wink AI • Deployed on Vercel</div>
 </div>
 <script>
-const $ = (id) => document.getElementById(id);
-const dropZone = $('dropZone'), fileInput = $('fileInput'), fileInfo = $('fileInfo');
-const enhanceBtn = $('enhanceBtn'), progressSection = $('progressSection');
-const progressBar = $('progressBar'), progressText = $('progressText'), progressStep = $('progressStep');
-const logsToggle = $('logsToggle'), logsPanel = $('logsPanel');
-const uploadStatus = $('uploadStatus'), uploadStatusText = $('uploadStatusText'), uploadBarFill = $('uploadBarFill');
-const errorMsg = $('errorMsg'), resultSection = $('resultSection');
-const downloadLink = $('downloadLink'), resultVideo = $('resultVideo');
-let selectedFile = null;
+var $ = function(id) { return document.getElementById(id); };
+var dropZone = $('dropZone'), fileInput = $('fileInput'), fileInfo = $('fileInfo');
+var enhanceBtn = $('enhanceBtn'), progressSection = $('progressSection');
+var progressBar = $('progressBar'), progressText = $('progressText'), progressStep = $('progressStep');
+var logsToggle = $('logsToggle'), logsPanel = $('logsPanel');
+var uploadStatus = $('uploadStatus'), uploadStatusText = $('uploadStatusText'), uploadBarFill = $('uploadBarFill');
+var errorMsg = $('errorMsg'), resultSection = $('resultSection');
+var downloadLink = $('downloadLink'), resultVideo = $('resultVideo');
+var selectedFile = null;
 
-const STEPS = {
+var STEPS = {
   download: { pct: 10, label: 'Download video ke server' },
   init: { pct: 15, label: 'Memulai sesi' },
   sign: { pct: 20, label: 'Mengambil token' },
@@ -186,7 +186,7 @@ const STEPS = {
   transcode_start: { pct: 55, label: 'Memulai transcode' },
   transcode: { pct: 65, label: 'Transcoding video' },
   delivery: { pct: 75, label: 'Mengirim ke AI' },
-  enhance: { pct: 85, label: 'AI memproses video' },
+  enhance: { pct: 85, label: 'AI memproses video' }
 };
 
 function formatSize(b) {
@@ -197,17 +197,21 @@ function formatSize(b) {
 }
 
 function addLog(level, message, detail) {
-  const line = document.createElement('div');
+  var line = document.createElement('div');
   line.className = 'log-line';
-  const ts = new Date().toISOString().slice(11, 23);
-  let html = '<span class="log-ts">' + ts + '</span> <span class="log-' + level + '">[' + level.toUpperCase().padEnd(7) + ']</span> ' + esc(message);
-  if (detail) html += '<span class="log-detail">' + esc(typeof detail === 'string' ? detail : JSON.stringify(detail)) + '</span>';
+  var ts = new Date().toISOString().slice(11, 23);
+  var html = '<span class="log-ts">' + ts + '</span> <span class="log-' + level + '">[' + level.toUpperCase().padEnd(7) + ']</span> ' + esc(message);
+  if (detail) {
+    html += '<span class="log-detail">' + esc(typeof detail === 'string' ? detail : JSON.stringify(detail)) + '</span>';
+  }
   line.innerHTML = html;
   logsPanel.appendChild(line);
   logsPanel.scrollTop = logsPanel.scrollHeight;
 }
 
-function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
 
 function showFile(f) {
   selectedFile = f;
@@ -216,36 +220,56 @@ function showFile(f) {
   enhanceBtn.disabled = false;
 }
 
-fileInput.addEventListener('change', (e) => { if (e.target.files[0]) showFile(e.target.files[0]); });
-['dragenter','dragover'].forEach(ev => dropZone.addEventListener(ev, (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); }));
-['dragleave','drop'].forEach(ev => dropZone.addEventListener(ev, (e) => { e.preventDefault(); dropZone.classList.remove('drag-over'); }));
-dropZone.addEventListener('drop', (e) => {
-  const f = e.dataTransfer.files[0];
-  if (f && f.type.startsWith('video/')) showFile(f);
-  else { errorMsg.textContent = 'File harus berupa video!'; errorMsg.classList.add('show'); }
+fileInput.addEventListener('change', function(e) {
+  if (e.target.files[0]) showFile(e.target.files[0]);
 });
 
-logsToggle.addEventListener('click', () => {
+['dragenter','dragover'].forEach(function(ev) {
+  dropZone.addEventListener(ev, function(e) {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+});
+
+['dragleave','drop'].forEach(function(ev) {
+  dropZone.addEventListener(ev, function(e) {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+  });
+});
+
+dropZone.addEventListener('drop', function(e) {
+  var f = e.dataTransfer.files[0];
+  if (f && f.type.startsWith('video/')) {
+    showFile(f);
+  } else {
+    errorMsg.textContent = 'File harus berupa video!';
+    errorMsg.classList.add('show');
+  }
+});
+
+logsToggle.addEventListener('click', function() {
   logsPanel.classList.toggle('show');
   logsToggle.textContent = logsPanel.classList.contains('show') ? '📋 Hide Live Logs ▲' : '📋 Show Live Logs ▼';
 });
 
-async function uploadToCatbox(file) {
+function uploadToCatbox(file) {
   addLog('info', 'Uploading video to catbox.moe (supports large files)...');
   uploadStatus.classList.add('show');
   uploadStatusText.textContent = 'Uploading to catbox.moe...';
 
-  const formData = new FormData();
+  var formData = new FormData();
   formData.append('reqtype', 'fileupload');
   formData.append('fileToUpload', file);
 
-  const xhr = new XMLHttpRequest();
-  return new Promise((resolve, reject) => {
-    let lastLogPct = -1;
+  var xhr = new XMLHttpRequest();
 
-    xhr.upload.addEventListener('progress', (e) => {
+  return new Promise(function(resolve, reject) {
+    var lastLogPct = -1;
+
+    xhr.upload.addEventListener('progress', function(e) {
       if (e.lengthComputable) {
-        const pct = Math.round((e.loaded / e.total) * 100);
+        var pct = Math.round((e.loaded / e.total) * 100);
         uploadBarFill.style.width = pct + '%';
         uploadStatusText.textContent = 'Uploading to catbox.moe... ' + pct + '% (' + formatSize(e.loaded) + ' / ' + formatSize(e.total) + ')';
         if (pct >= lastLogPct + 25) {
@@ -255,9 +279,9 @@ async function uploadToCatbox(file) {
       }
     });
 
-    xhr.addEventListener('load', () => {
+    xhr.addEventListener('load', function() {
       uploadStatus.classList.remove('show');
-      const responseText = xhr.responseText.trim();
+      var responseText = xhr.responseText.trim();
       addLog('debug', 'Catbox response (HTTP ' + xhr.status + '): ' + responseText.slice(0, 200));
 
       if (xhr.status >= 200 && xhr.status < 300 && responseText.startsWith('https://')) {
@@ -269,19 +293,19 @@ async function uploadToCatbox(file) {
       }
     });
 
-    xhr.addEventListener('error', () => {
+    xhr.addEventListener('error', function() {
       uploadStatus.classList.remove('show');
       addLog('error', 'Catbox network error');
       reject(new Error('Upload gagal: network error'));
     });
 
-    xhr.addEventListener('timeout', () => {
+    xhr.addEventListener('timeout', function() {
       uploadStatus.classList.remove('show');
       addLog('error', 'Catbox upload timeout');
       reject(new Error('Upload gagal: timeout'));
     });
 
-    xhr.timeout = 300000; // 5 menit timeout
+    xhr.timeout = 300000;
     xhr.open('POST', 'https://catbox.moe/user/api.php');
     xhr.send(formData);
   });
@@ -302,9 +326,9 @@ function resetUI() {
 }
 
 function updateProgress(data) {
-  const step = STEPS[data.step];
+  var step = STEPS[data.step];
   if (step) {
-    let pct = step.pct;
+    var pct = step.pct;
     if (data.step === 'upload' && typeof data.pct === 'number') pct = 25 + Math.round(data.pct * 0.15);
     if (data.step === 'download' && typeof data.pct === 'number') pct = Math.round(data.pct * 0.1);
     progressBar.style.width = Math.min(pct, 95) + '%';
@@ -313,7 +337,7 @@ function updateProgress(data) {
   }
 }
 
-enhanceBtn.addEventListener('click', async () => {
+enhanceBtn.addEventListener('click', async function() {
   if (!selectedFile) return;
   resetUI();
   enhanceBtn.disabled = true;
@@ -321,46 +345,49 @@ enhanceBtn.addEventListener('click', async () => {
   addLog('info', 'Starting enhancement for: ' + selectedFile.name + ' (' + formatSize(selectedFile.size) + ')');
 
   try {
-    // Step 1: Upload ke catbox.moe
     addLog('info', 'Step 1/2: Uploading video to catbox.moe...');
-    const tempUrl = await uploadToCatbox(selectedFile);
+    var tempUrl = await uploadToCatbox(selectedFile);
 
-    // Step 2: Kirim URL ke backend
     addLog('info', 'Step 2/2: Sending URL to enhancement API...');
     progressSection.classList.add('show');
 
-    const resp = await fetch('/api/enhance', {
+    var resp = await fetch('/api/enhance', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videoUrl: tempUrl, filename: selectedFile.name }),
+      body: JSON.stringify({ videoUrl: tempUrl, filename: selectedFile.name })
     });
 
     if (!resp.ok && !resp.body) {
-      const err = await resp.json().catch(() => ({}));
-      throw new Error(err.error || 'HTTP ' + resp.status);
+      var errObj = {};
+      try { errObj = await resp.json(); } catch(e) {}
+      throw new Error(errObj.error || 'HTTP ' + resp.status);
     }
 
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
+    var reader = resp.body.getReader();
+    var decoder = new TextDecoder();
+    var buffer = '';
 
     while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const parts = buffer.split('\n\n');
+      var result = await reader.read();
+      if (result.done) break;
+      buffer += decoder.decode(result.value, { stream: true });
+      var parts = buffer.split('\n\n');
       buffer = parts.pop();
-      for (const part of parts) {
+      for (var i = 0; i < parts.length; i++) {
+        var part = parts[i];
         if (!part.trim()) continue;
-        const eventMatch = part.match(/event:\s*(\w+)/);
-        const dataMatch = part.match(/data:\s*(.*)/);
+        var eventMatch = part.match(/event:\s*(\w+)/);
+        var dataMatch = part.match(/data:\s*(.*)/);
         if (!eventMatch || !dataMatch) continue;
-        const evt = eventMatch[1];
-        let payload;
-        try { payload = JSON.parse(dataMatch[1]); } catch { continue; }
-        if (evt === 'progress') updateProgress(payload);
-        else if (evt === 'log') addLog(payload.level, payload.message, payload.detail);
-        else if (evt === 'result') {
+        var evt = eventMatch[1];
+        var payload;
+        try { payload = JSON.parse(dataMatch[1]); } catch(e) { continue; }
+
+        if (evt === 'progress') {
+          updateProgress(payload);
+        } else if (evt === 'log') {
+          addLog(payload.level, payload.message, payload.detail);
+        } else if (evt === 'result') {
           progressBar.style.width = '100%';
           progressSection.classList.remove('show');
           resultSection.classList.add('show');
