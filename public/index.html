@@ -82,7 +82,7 @@ body {
 .log-error { color: #f87171; font-weight: 600; }
 .log-fatal { color: #ef4444; font-weight: 700; background: rgba(239,68,68,0.1); padding: 2px 6px; border-radius: 4px; }
 .log-debug { color: #777; }
-.log-detail { color: #555; font-size: 10px; display: block; margin-left: 14px; word-break: break-all; max-height: 40px; overflow: hidden; }
+.log-detail { color: #555; font-size: 10px; display: block; margin-left: 14px; word-break: break-all; max-height: 60px; overflow: hidden; }
 .logs-toggle {
   margin-top: 10px; text-align: center; font-size: 12px; color: #7c5cfc;
   cursor: pointer; user-select: none;
@@ -146,7 +146,7 @@ video.show { display: block; }
   <div class="file-info" id="fileInfo"></div>
   <button class="btn" id="enhanceBtn" disabled>⚡ Enhance Video</button>
   <div class="upload-status" id="uploadStatus">
-    <span class="spinner"></span><span id="uploadStatusText">Uploading video to temp storage...</span>
+    <span class="spinner"></span><span id="uploadStatusText">Uploading video to catbox.moe...</span>
     <div class="upload-bar"><div class="upload-bar-fill" id="uploadBarFill"></div></div>
   </div>
   <div class="progress-section" id="progressSection">
@@ -200,8 +200,8 @@ function addLog(level, message, detail) {
   const line = document.createElement('div');
   line.className = 'log-line';
   const ts = new Date().toISOString().slice(11, 23);
-  let html = `<span class="log-ts">${ts}</span> <span class="log-${level}">[${level.toUpperCase().padEnd(7)}]</span> ${esc(message)}`;
-  if (detail) html += `<span class="log-detail">${esc(typeof detail === 'string' ? detail : JSON.stringify(detail))}</span>`;
+  let html = '<span class="log-ts">' + ts + '</span> <span class="log-' + level + '">[' + level.toUpperCase().padEnd(7) + ']</span> ' + esc(message);
+  if (detail) html += '<span class="log-detail">' + esc(typeof detail === 'string' ? detail : JSON.stringify(detail)) + '</span>';
   line.innerHTML = html;
   logsPanel.appendChild(line);
   logsPanel.scrollTop = logsPanel.scrollHeight;
@@ -211,7 +211,7 @@ function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').re
 
 function showFile(f) {
   selectedFile = f;
-  fileInfo.innerHTML = `<strong>📎 ${f.name}</strong> • ${formatSize(f.size)}`;
+  fileInfo.innerHTML = '<strong>📎 ' + f.name + '</strong> • ' + formatSize(f.size);
   fileInfo.classList.add('show');
   enhanceBtn.disabled = false;
 }
@@ -230,54 +230,59 @@ logsToggle.addEventListener('click', () => {
   logsToggle.textContent = logsPanel.classList.contains('show') ? '📋 Hide Live Logs ▲' : '📋 Show Live Logs ▼';
 });
 
-async function uploadToTemp(file) {
-  addLog('info', 'Uploading video to temporary storage (file.io)...');
+async function uploadToCatbox(file) {
+  addLog('info', 'Uploading video to catbox.moe (supports large files)...');
   uploadStatus.classList.add('show');
-  uploadStatusText.textContent = 'Uploading video to temp storage...';
+  uploadStatusText.textContent = 'Uploading to catbox.moe...';
 
   const formData = new FormData();
-  formData.append('file', file);
+  formData.append('reqtype', 'fileupload');
+  formData.append('fileToUpload', file);
 
   const xhr = new XMLHttpRequest();
   return new Promise((resolve, reject) => {
+    let lastLogPct = -1;
+
     xhr.upload.addEventListener('progress', (e) => {
       if (e.lengthComputable) {
         const pct = Math.round((e.loaded / e.total) * 100);
         uploadBarFill.style.width = pct + '%';
-        uploadStatusText.textContent = `Uploading... ${pct}% (${formatSize(e.loaded)} / ${formatSize(e.total)})`;
-        addLog('debug', `Upload progress: ${pct}%`);
+        uploadStatusText.textContent = 'Uploading to catbox.moe... ' + pct + '% (' + formatSize(e.loaded) + ' / ' + formatSize(e.total) + ')';
+        if (pct >= lastLogPct + 25) {
+          addLog('debug', 'Catbox upload progress: ' + pct + '%');
+          lastLogPct = pct;
+        }
       }
     });
+
     xhr.addEventListener('load', () => {
       uploadStatus.classList.remove('show');
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          const data = JSON.parse(xhr.responseText);
-          const url = data.link || data.url || data.data?.url;
-          if (url) {
-            addLog('success', `Uploaded to temp storage: ${url.slice(0, 60)}...`);
-            resolve(url);
-          } else {
-            addLog('error', 'Upload response missing URL', data);
-            reject(new Error('Upload gagal: response tidak valid'));
-          }
-        } catch {
-          const url = xhr.responseText.trim();
-          if (url.startsWith('http')) {
-            addLog('success', `Uploaded to temp storage: ${url.slice(0, 60)}...`);
-            resolve(url);
-          } else {
-            addLog('error', 'Upload response not valid', xhr.responseText.slice(0, 200));
-            reject(new Error('Upload gagal: response tidak valid'));
-          }
-        }
+      const responseText = xhr.responseText.trim();
+      addLog('debug', 'Catbox response (HTTP ' + xhr.status + '): ' + responseText.slice(0, 200));
+
+      if (xhr.status >= 200 && xhr.status < 300 && responseText.startsWith('https://')) {
+        addLog('success', 'Uploaded to catbox.moe: ' + responseText);
+        resolve(responseText);
       } else {
-        addLog('error', `Upload failed: HTTP ${xhr.status}`, xhr.responseText?.slice(0, 200));
-        reject(new Error(`Upload gagal: HTTP ${xhr.status}`));
+        addLog('error', 'Catbox upload failed', { status: xhr.status, response: responseText.slice(0, 300) });
+        reject(new Error('Upload ke catbox gagal: ' + (responseText.slice(0, 100) || 'HTTP ' + xhr.status)));
       }
     });
-    xhr.addEventListener('error', () => { uploadStatus.classList.remove('show'); reject(new Error('Upload gagal: network error')); });
-    xhr.open('POST', 'https://file.io');
+
+    xhr.addEventListener('error', () => {
+      uploadStatus.classList.remove('show');
+      addLog('error', 'Catbox network error');
+      reject(new Error('Upload gagal: network error'));
+    });
+
+    xhr.addEventListener('timeout', () => {
+      uploadStatus.classList.remove('show');
+      addLog('error', 'Catbox upload timeout');
+      reject(new Error('Upload gagal: timeout'));
+    });
+
+    xhr.timeout = 300000; // 5 menit timeout
+    xhr.open('POST', 'https://catbox.moe/user/api.php');
     xhr.send(formData);
   });
 }
@@ -303,7 +308,7 @@ function updateProgress(data) {
     if (data.step === 'upload' && typeof data.pct === 'number') pct = 25 + Math.round(data.pct * 0.15);
     if (data.step === 'download' && typeof data.pct === 'number') pct = Math.round(data.pct * 0.1);
     progressBar.style.width = Math.min(pct, 95) + '%';
-    progressText.innerHTML = `<span class="spinner"></span>${step.label}`;
+    progressText.innerHTML = '<span class="spinner"></span>' + step.label;
     progressStep.textContent = data.step;
   }
 }
@@ -313,13 +318,15 @@ enhanceBtn.addEventListener('click', async () => {
   resetUI();
   enhanceBtn.disabled = true;
   enhanceBtn.textContent = '⏳ Processing...';
-  addLog('info', `Starting enhancement for: ${selectedFile.name} (${formatSize(selectedFile.size)})`);
+  addLog('info', 'Starting enhancement for: ' + selectedFile.name + ' (' + formatSize(selectedFile.size) + ')');
 
   try {
-    addLog('info', 'Step 1/2: Uploading video to temporary storage...');
-    const tempUrl = await uploadToTemp(selectedFile);
+    // Step 1: Upload ke catbox.moe
+    addLog('info', 'Step 1/2: Uploading video to catbox.moe...');
+    const tempUrl = await uploadToCatbox(selectedFile);
 
-    addLog('info', 'Step 2/2: Sending to enhancement API...');
+    // Step 2: Kirim URL ke backend
+    addLog('info', 'Step 2/2: Sending URL to enhancement API...');
     progressSection.classList.add('show');
 
     const resp = await fetch('/api/enhance', {
@@ -330,7 +337,7 @@ enhanceBtn.addEventListener('click', async () => {
 
     if (!resp.ok && !resp.body) {
       const err = await resp.json().catch(() => ({}));
-      throw new Error(err.error || `HTTP ${resp.status}`);
+      throw new Error(err.error || 'HTTP ' + resp.status);
     }
 
     const reader = resp.body.getReader();
@@ -362,7 +369,7 @@ enhanceBtn.addEventListener('click', async () => {
           resultVideo.classList.add('show');
           addLog('success', 'DONE! Result URL ready');
         } else if (evt === 'error') {
-          addLog('fatal', `REQUEST ERROR: ${payload.message}`);
+          addLog('fatal', 'REQUEST ERROR: ' + payload.message);
           throw new Error(payload.message);
         }
       }
